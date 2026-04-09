@@ -1,0 +1,342 @@
+Hi, my name is Ada. I'm not a professional
+musician, but I always loved electronic
+music. And in recent years, I've been learning
+how to produce it completely as a hobby. I've
+had the opportunity to explore a couple
+of music production tools. Some of them,
+like digital audio workstations, have so much
+potential and possibilities, but for me, they
+just don't give me as much fun making music as the
+MC-707 groovebox. I know it has its limitations,
+but somehow it has remained my favorite
+musical instrument. And about the limitations:
+some of the MC grooveboxes' limitations
+are just too much even for me. Yes,
+I almost hear you saying: the lack of sidechain
+compression and I completely agree. By the way,
+I have a solution for that too, but I'll try
+to make a video about it later. Today, however,
+I'd like to address another problem with these
+machines: the lack of official support for the
+MIDI System Exclusive messages communication.
+Other high-end Roland products like Fantom
+series have the system exclusive messages protocol
+disclosed in their MIDI implementation charts. It
+allows users to control almost any configurable
+parameters via MIDI interface using for example an
+external hardware controller and all that without
+even touching any onscreen menu. Can you imagine
+how awesome would that be in the MC grooveboxes?
+But the best thing is: it's totally possible. I
+decided to investigate that topic and I did it.
+I hacked the MC grooveboxes SysEx interface using
+simple self-made hardware and a Python script.
+After some coding and tweaking, I managed to
+control the ZEN-Core synth engine in both MC-101
+and MC-707 grooveboxes with their MIDI interface.
+In this video, I'd like to share with you how I
+did it and how you can do it, too. I'll show you
+not only how to interact with the MC grooveboxes
+using MIDI SysEx messages, but I'll also tell you
+more general information about the data exchange
+with Roland instruments. Of course, I'll show you
+my experimental hardware and software test
+setup. This information can be useful if you
+want to recreate what I did or to figure out how
+to read and control other parameters of the MC
+grooveboxes. My not so beautiful proof of concept
+test software is free and open source and the link
+is available in the description. And about that...
+some disclaimers. Please remember the two things.
+First, if you decide to tweak with the instrument,
+you do it at your own risk. So don't blame me if
+you screw up your gear. The second thing is
+that this video shows just a proof of concept
+inspiration in case you'd like to conduct your
+own further experiments. And I hope that it will
+help you to make something awesome. But please
+remember the video definitely does not show a
+complete solution. It's just up to your creativity
+what you do with the information you get here.
+You may safely skip to the next section if you
+already know why you may want to control MC-101
+or MC-707 over MIDI. But if you ask why would
+I want to control the MC ZEN-Core synth engine
+with an external hardware or software then here
+are some ideas. One of the basic reasons is the
+possibility to implement some degree of hands-on
+control over the synthesis engine. If you have
+MC-101 or MC-707, you need to do something
+called menu diving to modify parameters of
+sound generators inside these instruments. For
+the MC-101, the situation is even worse because
+it uses C1 to C4 knobs for editing the ZEN-Core
+parameters and modifying some of the parameters
+requires something like a micrometer precision
+to set the desired values. Another example,
+modifying envelope shapes by setting just a
+couple of numbers on screen without a proper
+graphical user interface can be quite a
+pain too. In general, if you tried it,
+you probably have this feeling that sound design
+on MC is at least inconvenient up to the point
+that sometimes it's just easier to record a sample
+from another synthesizer or sometimes to record a
+sample from a VST. In contrast, the possibility
+to control sound parameters at a deeper level
+in a more hands-on way creates a huge space for
+creativity in sound design and performance. So,
+let's dive into it. Here, I'll try to cover some
+necessary basic information, but in general,
+I assume you have a basic understanding of MIDI
+communication, the hexadecimal number system,
+and you know a bit about computer programming.
+To develop the test software, I used Python
+because it's a very popular language. The key to
+control the ZEN-Core synth engine was to figure
+out two things. First, how to communicate
+with the MC grooveboxes. Fortunately, the
+communication method turned out to be the same as
+for many other Roland instruments. Second thing,
+which numbers or we can say addresses are assigned
+to specific sound parameters and how the synth
+patches are organized in the instrument. Further
+in this video, I'll tell you more about both of
+these things. But let's start with what's going
+on with the addresses and the patch organization.
+In electronic musical instruments manufactured by
+Roland, every single parameter which you can read
+or modify using system exclusive messages has its
+own unique address. This way we can unambiguously
+refer to each parameter. Thanks to the address,
+the instrument knows what we would like to read
+or modify. The range of addresses is limited and
+not every address has its own assigned value.
+Some of the addresses may be empty. Some of them
+contain data which may not be interesting for us
+in this particular context of sound design but can
+be interesting for some other things. And finally,
+some of the addresses contain information about
+the ZEN-Core synth patches. Such a concept of
+assignment of values or parameters to addresses
+creates something like an address space or a
+memory map known from microprocessor systems. In
+other Roland's musical instruments documentation,
+I noticed that their address spaces are specific
+to the particular instrument, but luckily for us,
+they have many common features also with the MC
+grooveboxes. The ZEN-Core sound parameters or the
+ZEN-Core patches are stored in specific data
+structures across the instrument's parameters
+memory map. It's not an official name, but in
+this video, I will refer to them as ZEN-Core
+tone descriptors or ZEN-Core sound descriptors.
+In MC-101 and MC-707, the huge block of the
+ZEN-Core tone descriptors start at the address of
+three and 70 hexadecimal. In other Roland musical
+instruments, the addresses and the organization
+of the ZEN-Core sound descriptors are different.
+In this diagram, you can see the starting
+addresses of the descriptor blocks in MC-707. As
+you can see, each track has 17 descriptors. Roland
+MC-101 and MC-707 really have a lot of ZEN-Core
+descriptors for tone tracks because each tone
+clip and each tone track has its own descriptor.
+This results in 128 descriptors for just the clip
+sounds plus one separate descriptor for each track
+tone. An interesting compatibility thing is that
+MC-101 has the same descriptor set as MC-707,
+but in 101 you can play sound only from the
+descriptors for tracks number one to four.
+If you initialize a track as the tone track, only
+one of the 17 descriptors will be loaded to the
+ZEN-Core sound synthesizer of that track.
+If you choose track as the sound source,
+the track tone descriptor will be loaded to
+the track sound synthesizer. And if you choose
+clip as the sound source, one of the clip sound
+descriptors will be loaded at a given time. The
+other descriptors will be ready to be loaded
+immediately after you select another clip.
+You can see that I couldn't read the ZEN-Core
+sound patch for clip number 16 of track number
+two. Both MC-101 and MC707 didn't respond when
+I requested data from this particular clip. If
+you have any experience with it, please let me
+know in the comments. After I read the available
+documentation and I did some tests, it looks like
+we can interact with the ZEN-Core synth patches in
+MC grooveboxes the same way as we would interact
+with the patches in other Roland instruments with
+ZEN-Core synth engine. I didn't try to modify all
+the parameters of the ZEN-Core synth patches, but
+it's highly probable that they act the same way
+or in a very similar way to other Roland ZEN-Core
+instruments. So here's the important thing. As a
+starting point for your own further experiments,
+you can use MIDI implementation charts for other
+Roland instruments which use the ZEN-Core send
+engine but disclose the system exclusive message
+communication. Just remember that the base
+addresses of the ZEN-Core sound descriptors
+are different for different Roland products.
+So now we know what are the base addresses of the
+ZEN-Core sound descriptors in MC-707 and MC-101.
+Now let's see how to read and modify them. We
+can imagine a MIDI system exclusive message as an
+empty box. A box that doesn't contain any useful
+information, but we can put some data in it. gear
+manufacturers decide what to put in that box or
+in other words what data to put there and how the
+data should be ordered or we can say structured.
+Two of the commonly used types of packets that
+we can put inside the SysEx messages for Roland
+instruments are data request one and data set one
+or DT1. Data request one allows us to read the
+internal parameters of the Roland instrument.
+And if you want to write the internal parameter
+to the Roland instrument, you may want to use the
+data set message or DT1. The DT1 message is also
+the response message to the data request message.
+Fortunately, Roland MC-101 and MC-707 use these
+messages too, and you can find information about
+them in Roland's MIDI implementation charts
+of a few other instruments. This diagram shows
+the system exclusive message for requesting data
+from a Roland instrument that supports the SysEx
+communication. It is basically a SysEx message
+but with a specific data structure inside it.
+We need to provide the model identification number
+in the message in bytes 3 to 6. It's just a series
+of numbers three bytes and 5D or 5E hexadecimal
+whether we communicate with MC-707 or MC-101. The
+field that distinguishes the data request message
+is at the index 7 and its value is 11 hexadecimal.
+The address will tell the instrument from which
+internal location you would like to read the
+data. The length field tells the instrument how
+many bytes of data you'd like to read. Please
+remember that the length field is very poorly
+supported in my software. It doesn't allow you
+to encode any values larger than 127. But I
+just don't think there is a need to implement
+such large reads. So I just left it this way.
+The instrument will return the data starting
+from the given address and will continue reading
+towards the higher addresses. The maximum number
+of returned bytes will be up to length. But
+if there is an empty location before the end
+of the requested length is reached, the MC-707 or
+MC-101 will just return less data. As a response,
+you will get the data set or DT1 message. You
+can also use the DT1 message to set the internal
+parameters of the Roland instrument. DT message
+structure is shown here on the screen. Here the
+byte that allows the instrument to distinguish
+the message is 12 hexadecimal at index 7. And
+again you specify the address to write the data
+but this time you specify explicitly the data
+that you want to write. Each next byte of data
+fields will be written at the next higher address.
+Both the request and the data set packets use a
+checksum byte. This byte contains a number which
+depends on the values of bytes from index 8 onward
+up to the checksum. For example, we take data from
+bytes of index 8 to 15 for the request message.
+The Python code that I used in my experimental
+script to compute the checksum is shown here.
+Checksum computing is also described in the MIDI
+implementation charts of the Roland instruments
+that support the MIDI SysEx communication.
+I conducted some experiments to show you the real
+contents of the SysEx packets that are transmitted
+over MIDI. In these experiments, I'm reading
+and writing two values, the coarse tune and
+the partial wave number for the left channel. I
+used a simple hardware setup with a USB to serial
+adapter and a serial port to MIDI converter.
+Of course, you can use other interfaces too. I
+think it should work with USB MIDI as well, but in
+that case, just remember to use different software
+libraries for interfacing the musical instrument.
+I wrote a Python script that sends and receives
+raw data over serial port using the pyserial
+library. This way, we can observe and have control
+over every single byte being transmitted. I use
+the script to scan the values from the instruments
+address space to figure out where the ZEN-Core
+sound descriptors start. The script displays a lot
+of information on the terminal so we can easily
+follow on the screen what's going on. As the first
+experiment, let's modify the ZEN-Core sound for
+track number two. Let's make sure that the sound
+source is set to track. In my test project, it
+contains an internal wave-based sound. As you can
+see in here, the script also allows you to play a
+single test note via MIDI. Now, let's modify the
+Coarse Tune parameter which is a part of the tone
+common substructure. The Coarse Tune parameter
+is available at the offset of 18 hexadecimal
+from the start of the tone common substructure.
+The modification is done here in this function. It
+reads the current course tune value, modifies it,
+and writes it back. The modification requires
+writing only one byte of data. I enter the sound
+menu with shift plus sound and I navigate to
+coarse tune so that we can see what's going on.
+In the second experiment, also in track number
+two tone, let's modify the tones left channel
+waveform of partial number two. This requires
+us to compute the offset of the tone partial
+number two substructure and the offset of
+wave number left field in that structure.
+This time the read and written value will
+be split into four bytes but just four bits
+of each byte will be used. Again I navigate in
+the sound menu to partial number two edit. Then
+I navigate to the subtab PCM and you can see
+that the waveform changes with each message.
+Yes, I'm aware that the script isn't the fastest
+one and the code quality is far from beautiful,
+but I made it just as a proof of concept. And my
+further goal is to develop a hardware controller
+for modifying ZEN-Core synth parameters
+for MC-101 or MC-707. And a little bonus,
+how I figure out where to look for the ZEN-Core
+patches. The function for performing the memory
+scan and dump divides the address bits into
+two halves and scans only tiny chunks of the
+instruments address space. This way it works
+much faster so that you don't have to read
+every single byte from the instrument's address
+space. It also helped me that the ZEN-Core sound
+descriptors are aligned and it's like that for
+all the Roland ZEN-Core instruments for which
+I compared the documentation. This way it was
+enough to scan for a couple of byes every 64 Kilo
+locations. Such a scanning method and jumping
+between locations proved to be very efficient.
+I also noticed that the sound descriptors start
+with the ASCII strings. They are super easy to
+find even by looking at the memory dump in
+a CSV file. That's why I added the code that
+tries to display the contents of the address
+space as ASCII characters. Then I populated
+the entire matrix of available track tones and
+clip tones mostly with some basic INIT TONEs.
+But I named the tones in such a way that I could
+tell which sound belongs to which address in the
+internal address space. I think this helped
+me the most. And that's why I didn't have to
+scan the entire address space, but I could scan
+just the beginnings of the areas suspected of
+containing the clip sound descriptors. Thank you
+if you survived watching this video until the end.
+I hope the information here will be inspiring
+for you to make something awesome. But if you
+find any information inaccurate, unclear, or you
+noticed errors, please let me know in the comments
+and I’ll try to address it. It would be nice if
+you leave a like or a comment if you find this
+video useful or interesting in any way. Thank you
+again and see you maybe in the next video. Bye.

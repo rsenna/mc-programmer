@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mc-programmer"
+version = "0.1.0"
+description = "Python library for programming Roland MC-101, MC-707, and MV-1 grooveboxes via MIDI System Exclusive messages."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Douglas Carmichael" },
+]
+keywords = ["roland", "mc-101", "mc-707", "mv-1", "midi", "sysex", "groovebox", "zen-core"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Sound/Audio :: MIDI",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+
+# The library has zero hard dependencies — it speaks raw Sys-Ex byte lists.
+# Pluggable transports live behind extras so users only install what they
+# actually need:
+#
+#   pip install mc_programmer[rtmidi]   # CoreMIDI on macOS, ALSA on Linux, WinMM on Windows
+#   pip install mc_programmer[mido]     # mido + rtmidi
+[project.optional-dependencies]
+rtmidi = ["python-rtmidi>=1.5"]
+mido = ["mido>=1.3", "python-rtmidi>=1.5"]
+
+[tool.setuptools]
+packages = ["mc_programmer"]
+
+[tool.setuptools.package-data]
+mc_programmer = ["py.typed"]

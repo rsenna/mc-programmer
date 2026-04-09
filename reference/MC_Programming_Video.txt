@@ -1,0 +1,322 @@
+Hi! The access to the sequencer in Roland
+MC-101, MC-707, and MV-1 via their MIDI
+interface has been totally undocumented until
+now. So, what can you expect from this video?
+I'll show you how the tone track and drum track
+sequencers are organized, how they store data,
+and how to convert sequences between the
+instruments internal format and a more human
+readable notation. This may be useful if you want
+to tweak the instrument or if you are more on the
+composing side of hardware music production.
+Once you understand how the sequencer works,
+you can implement things like piano roll
+visualizers, which I think are totally missing in
+these instruments. You can even build convenient
+converters between the MC or MV sequencers and
+MIDI files. If you know how to interface with
+the sequencer, you can even implement your own
+external sequence editor as a standalone computer
+application. Or you can try building a sequence
+visualizer or even an editor as an embedded device
+based on an industrial microcontroller. Or maybe
+you just enjoy your MC or MV and you are simply
+curious about how it works and how to push it to
+its limits. In this video, I'll focus on note
+sequencing and motion sequencing. Of course,
+I share all the test software for free on GitHub.
+is released under a non-restrictive license,
+so you can freely use it as an inspiration
+or as a part of your own creative projects.
+The concepts and the software presented here were
+developed using MC-707. Everything applies almost
+exactly to the MC 101 as well, of course, with the
+limitation of four tracks. I only tested the code
+on MV1 briefly, but the most important concepts
+like sequence organization work the same way.
+I developed the test software under Linux, but
+the code is written in Python, so it should be
+relatively easy to port it to other platforms. It
+also runs on Raspberry Pi. So, it is an option if
+you want to run it, but you don't have access to a
+regular Linux computer and you don't want to deal
+with virtual machines. The sequencer area in the
+address space starts at the address of 0x20000000
+hexadecimal. Here you can see the base addresses
+of all the clips and tracks in MC-707. Of course,
+the MC-101 will have a similar structure except
+that the structures representing tracks 5 to
+8 will be unused. In the case of MV-1, I
+checked the first four tracks configured
+as drum tracks and tone tracks, and it worked
+similarly. Each clip has the same structure.
+Let's call it a "clip descriptor". A very similar
+structure can be found for each track, but I think
+not all the fields will be valid for both of
+these structures. So, let's concentrate mainly
+on the "clip descriptor". The "clip descriptor"
+is divided into areas for which you can get a
+response when scanning the address space. I didn't
+decode all of the fields, but just some of them,
+which I think can be particularly useful. Here,
+I show you only the information I figured out,
+but obviously there are many more interesting
+settings there. At the very beginning of the clip
+descriptor, you can find the clip's name
+encoded as a series of ASCII characters.
+The next interesting part that I found in the
+clip descriptors are the settings of sound control
+parameters for the clip like for example volume,
+filter, resonance and so on. This information
+starts at the offset of 0x10000 hexadecimal
+from a clip descriptor's base address. And yes,
+the sound control can be set individually for each
+clip using the documented CC messages. But now,
+thanks to the Sys-Ex messages, we can also read
+and display the initial settings for each clip.
+I figured out most of them, not all of them. But I
+think it's a matter of a couple of more hex dumps,
+for example, using the "hack tools" that I've
+already shown you in my previous video. The next
+area starts at the offset of 0x20000 hexadecimal
+from the clip base address. And I think the most
+interesting fields there are settings for step
+time and number of steps for the particular clip
+and they can be quite important if you'd like
+to implement for example sequence visualizers
+like piano rolls. The step time is encoded as
+a lookup table with the values starting from 0.
+Zero means each step represents an 8th note. One
+means a 16th note and so on. The step length is
+encoded using two bytes. For example, the two
+bytes 0x8 and 0x0 decode to 0x80 hexadecimal
+which is 128 decimal. Finally, the note sequence
+is encoded at the offset of 0x30000 hexadecimal
+from the clip base address and the motion encoding
+starts at the offset of 0x40000 hexadecimal. The
+recorded pitchbend values are encoded from the
+offset of 0x50000 and four zeros hexadecimal.
+This is the part that was the hardest to
+figure out. But maybe don't give up and
+let's prepare for quite a ride. Further, I'll
+introduce some technical names that I use just
+to be able to communicate concepts clearly,
+but I actually have no idea how the concepts
+and the data structures are called officially
+by Roland. When analyzing the note sequencer,
+we can split each address into the following
+parts. The first four hexadecimal digits will
+represent the clip base address and the address
+space area for the sequence. So in other words,
+the clip base address plus the offset of the
+note sequence area. The next two hexadecimal
+digits will represent the step index. See how the
+valid MIDI range of 0x00 to 0x7F nicely represents
+the step indices of step numbers 1 to 128. And
+the last two digits represent the parameters of
+the step. And this is one of the deadly parts,
+but stick with me. Here you can see the contents
+of the step number 57 encoded at the index of 56
+decimal which is 0x38 hexadecimal. Now let's see
+what's inside each step on a hex dump. The steps
+don't really look very friendly but when divided
+into 16-byte chunks each step starts to make
+sense... at least kind of. The step structure
+in a more table-like form is shown here. It
+may not sound encouraging for a good start,
+but honestly, I have no idea what's in the first
+16 bytes. But moving on, at the offset of 0x10
+hexadecimal, we have 32 bytes which contain the
+information about the notes playing in this step.
+Each pair of bytes contains a MIDI note number
+encoded in four bit pairs. So for the note C4
+which has the MIDI number hex code of 0x3C, the
+corresponding pair of bytes will contain 0x03 and
+0x0C. An empty node is a special case here which
+is encoded as two 0x0F bytes. If using unsigned
+interpretation it decodes to 0xFF or 255 or if
+using the two's complement encoding it decodes
+into -1. And as you can see each step can contain
+as many as 16 different notes. And here the word
+different is important and we'll see later why.
+Next, we've got a velocity field, which is pretty
+obvious - maybe, except the fact that if you
+program the sequencer and edit the velocity in
+an initial step, the further steps may have the
+velocity encoded as when initially programmed.
+At the offset of 0x40 hexadecimal, we can see
+the starting points of each note within a step.
+The starting points are expressed in the hundreds
+of a step time and they are encoded using pairs
+of bytes. Again, in each byte of a pair, only
+four bits are used. And there is more. Since the
+nodes can start before a step starts, the start
+time can be negative and the negative start time
+values are encoded in two complement encoding.
+So for example 0 will be 0x00 hexadecimal but
+-1 will be 0xFF hexadecimal. -2 will be 0xFE
+hexadecimal - and so on down to -50 which
+encodes to 0xCE hexadecimal. The ending times of
+the notes are at the offset of 0x60 hexadecimal
+in each step. They can have the values from 0
+to 100 or 0x64 hexadecimal. The default values
+are 0x50 hexadecimal which is 80 decimal. But
+there is a catch. If a node is longer and it
+ties to the next step, the end time must be set
+to 100 and only then the note may be continued in
+the next step. If the end time is set to a smaller
+value of up to 99, the note ends in the particular
+step after the number of cents expressed in
+this field. The last field in the note step
+is the information about the "substep". If this
+field is zero, then there is no "substep" and
+the note is played once per step. But you can set
+it to two notes per step, three, four, or "flam".
+So let's analyze it in practice. Let's assume
+that in the simplest case, we've got a C3 note
+at step number 4 starting at the beginning of
+the step, and with a default duration 0.8 steps,
+which is 80 cents. The velocity is set to 123
+decimal or 0x7B hexadecimal and the note encodes
+like this. The neighboring steps remain empty.
+Now let's look at a more complex example. This
+time we also have a C3 node but now it occupies
+three steps. It starts at the step number 6 and
+it's shifted 6 cents after the step starts. The
+note length is now set to 2.5 steps which is
+equal to 250 cents. So to get the length of 250
+cents, we need to tie the note in step six and
+step seven by setting the end times in these
+steps to 100. And in the last step number 8,
+the note will have its end time set to 56 cents
+because it starts 6 cents after the beginning of
+the step. Now let's dive even deeper. What if
+we have a note that starts before the start of
+the step? Such a node has its start time set to
+a negative value. So let's look at this example.
+Now our C3 node has again the same velocity.
+It belongs to step number 11, but it starts
+10 cents before step 11 starts. And the length
+of the note will be set to 1.92 or 192 cents.
+So the start time in step 11 will be set to minus
+10 and it will be encoded in two's complement as
+0xF6 which results in the pair of bytes 0x0F
+and 0x06. End time in step 11 will be set to
+100 because it ties to the next step - and in
+step 12 the note ends at the time of 82 cents.
+This way the overall duration of the note will
+be 10 + 100 + 82. Now let's figure out how the
+sequencer deals with polyphony. This part is also
+not so easy and not so straightforward. As you've
+seen just before in any step there can be not just
+one note but there are 16 nodes to be encoded and
+I gave them some kind of indices like that up to
+15 and this applies to every field in each step.
+So to represent each step in the test software I
+created I introduce the name "component" for each
+note playing in each step. Each "component" can be
+represented for example as a simple dictionary in
+Python. I used an additional field "processed"
+in the "component" for internal conversion
+procedures. And as you could see the components
+are indexed from 0 to 15 in one step. So they
+can be represented for example as a list of 16
+such dictionaries in Python. In this diagram,
+I show how we can visualize a sequence as it is
+encoded in the groove box. So here we've got the
+grid of 128 steps indexed from 0 to 127. And in
+each slot of the grid, we've got one component.
+The components are indexed from 0 to 15 and they
+are represented in my software as a Python list
+of dictionaries. And now we've got the full
+representation of one step. To get the full
+sequence, we just have to create a list of
+such steps. The groovebox has the capability
+of storing 128 steps in each clip. The steps are
+actually stored in the memory no matter if they
+are visible in shorter sequences or not. This way
+we can represent the sequence as a two-dimensional
+list of lists of components. So you can access
+a particular component by just writing something
+like this. Let's introduce the name "lane" for
+all the components of the same index. The rule
+here is that all the nodes must be placed as close
+as possible to "lane" 0, so to the lowest offset
+in each step. If we don't program any polyphony,
+we have the notes only in lane zero. Let's for
+example have a note that spans from step 3 to
+4 which have the indices of 2 and 3. But if you
+want the polyphony and you'll add another note,
+the next note will be placed each time as close
+as possible to the lowest lane number like this.
+And if you add yet another and even longer note to
+the sequence, but let's say at step 2 of index 1,
+it will look for example like this. The sequence
+playback mechanism in the instrument probably
+tracks the note numbers between the steps and
+it considers the step end times if they are 100 or
+less. But if you program the values consistently,
+the sequencer will - let's say - understand the
+notes. And an important thing, I noticed that if
+I delete a note, then the same rules apply. All
+the other nodes move down to the lowest lanes.
+Here is an example of a real pattern
+that I programmed. You can create the
+experiments using function from
+the file of the name shown here.
+You can see how the programmed notes can be
+displayed in the form of a piano roll and how
+the notes were distributed by MC-707 to different
+"lanes". As long as the sequencer played single
+notes, they were placed in the lowest lane. But
+when there were more notes, they got stacked up
+toward higher lanes. A somewhat interesting thing
+here is that for the sequencer, there seems to be
+not much of a difference in which lane a component
+is placed as long as they are tightly deployed in
+the lowest lane numbers. Here you can see what
+happened when I added a node to the sequence.
+And here is an example of a much more
+complex polyphonic pattern. As you can see,
+it works the same, but just on the larger scale.
+Maybe just let me know in the comments if you are
+interested in how I created these diagrams,
+but I'm not including those video clips to
+keep this video relatively short. The motion
+sequencing in MC grooveboxes is much simpler
+than the note sequencing. The motion sequencer
+starts at the offset of 0x40000 hexadecimal in
+each clip. You probably know that you can record
+and edit the four knobs C1 to C4. But there is
+more. You can also record the parameters like
+sustain pedal operation, aftertouch, modulation
+and many many more. And those parameters are also
+recorded independently from the C1 to C4 knobs. I
+tested recording of two additional parameters,
+but the MC's can record up to four different
+sources plus the pitchbend wheel separately.
+I didn't check that feature on MV-1 though.
+In the main motion sequencer, the address
+is divided in a similar manner as in the
+note sequencer, but this time we start at
+the offset of 0x40000 hexadecimal in each
+clip. The steps are encoded like this
+and the least significant bite contains
+the offset of the motion lanes. So this way
+each step can contain up to 8 motion lanes.
+The lowest 4 offsets are assigned to the
+C1 to C4 knobs and the latter 4 are for
+recording other parameters live. For example,
+touch, modwheel, sustain, and so on. Each step
+is divided into 8 substeps so that the motion
+can change with a better time resolution than
+just a single step time. If you program motion
+live or if you use the motion automation tool,
+the sequencer will use all the substeps to record
+and play the motion. But if you program motion
+using the step sequencer, the motion can
+be set only with the whole step resolution.
+All the software that I created for my
+experiments is available on GitHub for
+free with a nonrestrictive license. Thanks for
+watching and see you maybe in the next video. Bye.

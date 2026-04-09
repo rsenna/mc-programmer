@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+.venv/
+venv/
+
+# Swift / SwiftPM
+.build/
+.swiftpm/
+Packages/
+*.xcodeproj/
+DerivedData/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Roland source documentation — copyrighted, must NOT be committed.
+# Contributors download these locally from Roland's site to regenerate
+# the parameter tables (see ROADMAP.md and tools/gen_zencore_params.py).
+reference/*.pdf
+reference/firmware/
+reference/tools_jp_zcore.txt
+_firmware_extract/
+*.bin.extracted/
+
+# Tooling scratch
+/tmp/
+*.tmp
