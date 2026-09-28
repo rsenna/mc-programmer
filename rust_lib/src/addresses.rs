@@ -1,0 +1,344 @@
+//! MC-101 / MC-707 / MV-1 address-map constants and address arithmetic.
+//!
+//! All values come straight from the reference scripts (`trk_clip_tools.py`,
+//! `zen_core_tools.py`) and the two video transcripts in the parent repo.
+//!
+//! Address-space rules:
+//!
+//! * Addresses are 28 useful bits laid out across four bytes; **no byte may
+//!   have its MSB set** (the `0x80808080` mask in the dump routines) because
+//!   the bytes have to fit through the 7-bit MIDI pipe. The
+//!   `next_valid_base_address` helper jumps over any candidate that would
+//!   violate that rule.
+//! * The sequencer area starts at `0x20000000`. Each track is offset by
+//!   `0x01080000` from the previous one, and each clip within a track is
+//!   offset by `0x00080000` from the previous (subject to the 0x80 rule).
+
+use crate::error::{Error, Result};
+
+const ADDRESS_MSB_MASK: u32 = 0x8080_8080;
+const MAX_LINEAR_ADDRESS: u32 = 0x0FFF_FFFF;
+
+/// Convert a four-byte Roland 7-bit address into a linear byte index.
+pub fn roland_address_to_linear(address: u32) -> Result<u32> {
+    if address & ADDRESS_MSB_MASK != 0 {
+        return Err(Error::Value(format!(
+            "invalid Roland address 0x{address:08X}: every byte must be 7-bit"
+        )));
+    }
+    Ok(((address >> 24) & 0x7F) << 21
+        | ((address >> 16) & 0x7F) << 14
+        | ((address >> 8) & 0x7F) << 7
+        | (address & 0x7F))
+}
+
+/// Convert a linear byte index into a four-byte Roland 7-bit address.
+pub fn roland_address_from_linear(linear: u32) -> Result<u32> {
+    if linear > MAX_LINEAR_ADDRESS {
+        return Err(Error::Value(format!(
+            "linear Roland address 0x{linear:X} exceeds the 28-bit address space"
+        )));
+    }
+    Ok(((linear >> 21) & 0x7F) << 24 | ((linear >> 14) & 0x7F) << 16 | ((linear >> 7) & 0x7F) << 8 | (linear & 0x7F))
+}
+
+/// Add a linear byte count to a Roland 7-bit address.
+pub fn add_roland_offset(address: u32, byte_offset: u32) -> Result<u32> {
+    let linear = roland_address_to_linear(address)?
+        .checked_add(byte_offset)
+        .ok_or_else(|| Error::Value("Roland address addition overflowed".to_string()))?;
+    roland_address_from_linear(linear)
+}
+
+/// Add one packed Roland address value to another.
+pub fn add_roland_address(address: u32, packed_offset: u32) -> Result<u32> {
+    add_roland_offset(address, roland_address_to_linear(packed_offset)?)
+}
+
+// --- Sequencer constants -----------------------------------------------------
+
+pub const SEQ_BASE_ADDRESS: u32 = 0x20000000;
+pub const SEQ_PARAMS_OFFS: u32 = 0x0002_0000;
+pub const SEQ_NOTE_OFFS: u32 = 0x0003_0000;
+pub const SEQ_MOTION_OFFS: u32 = 0x0004_0000;
+pub const SEQ_PITCHBEND_OFFS: u32 = 0x0005_0000;
+
+pub const STEP_SIZE: u32 = 0x100; // bytes per note step or motion step
+pub const SEQ_TRK_OFFSET: u32 = 0x0108_0000;
+pub const SEQ_CLIP_OFFSET: u32 = 0x0008_0000;
+pub const NUM_TRACKS: usize = 8;
+pub const CLIPS_PER_TRACK: usize = 16;
+pub const STEPS_PER_CLIP: usize = 128;
+
+/// Clip 0 of each track lives at one of these bases (per the test scripts).
+pub const CLIP1_BASE_ADDR: [u32; NUM_TRACKS] = [
+    0x20000000, 0x21080000, 0x22100000, 0x23180000, 0x24200000, 0x25280000, 0x26300000, 0x27380000,
+];
+
+/// Track sound (not clip sound) base addresses, per `trk_clip_tools`.
+pub const TRK_BASE_ADDR: [u32; NUM_TRACKS] = [
+    0x21000000, 0x22080000, 0x23100000, 0x24180000, 0x25200000, 0x26280000, 0x27300000, 0x28380000,
+];
+
+/// Per-track settings block (color, sound source, etc.).
+pub const TRK_SETTINGS_BASE_ADDR: [u32; NUM_TRACKS] = [
+    0x10000800, 0x10000A00, 0x10000C00, 0x10000E00, 0x10001000, 0x10001200, 0x10001400, 0x10001600,
+];
+pub const SND_SRC_CFG_OFFS: u32 = 0x04; // 0 -> track is sound source, 1 -> clip is
+pub const TRK_COLOR_OFFS: u32 = 0x19;
+pub const TRK_TYPE_OFFS: u32 = 0x14; // 0=TONE, 1=DRUM, 0x7F=OFF
+
+// --- ZEN-Core descriptor constants ------------------------------------------
+
+/// Each tone-track block has 17 ZEN-Core descriptors — 16 clip tones + 1
+/// track tone — aligned every `0x20000` bytes.
+pub const ZENCORE_TONE_ALIGNMENT: u32 = 0x0002_0000;
+pub const ZENCORE_TRACK_BASE: [u32; NUM_TRACKS] = [
+    0x30000000, 0x30220000, 0x30440000, 0x30660000, 0x31080000, 0x312A0000, 0x314C0000, 0x316E0000,
+];
+
+/// Selected ZEN-Core tone offsets demonstrated in the ZC programming video.
+pub const TONE_COMMON_COARSE_TUNE_OFFS: u32 = 0x0018; // 1 byte, valid 16..112
+
+// --- Note-step parameter offsets (within one 0x100-byte step record) --------
+
+pub const NOTES_OFFS: u32 = 0x10; // 16 notes × 2 bytes (4-bit nibble pairs)
+pub const VELOCITY_OFFS: u32 = 0x30; // 16 velocities × 1 byte
+pub const START_OFFS: u32 = 0x40; // 16 start times × 2 bytes (signed cents)
+pub const END_OFFS: u32 = 0x60; // 16 end times × 1 byte (0..100; 100 ties)
+pub const SUBSTEP_OFFS: u32 = 0x70; // 1 byte
+pub const NOTES_PER_STEP: usize = 16;
+
+// --- Motion lane constants --------------------------------------------------
+
+pub const MOTION_LANE_NAMES: [&str; 8] = [
+    "C1/FILTER",
+    "C2/MOD",
+    "C3/FX",
+    "C4/SOUND",
+    "Ext 0x40",
+    "Ext 0x50",
+    "Ext 0x60",
+    "Ext 0x70",
+];
+pub const MOTION_LANE_OFFSET: u32 = 0x10; // bytes between lanes inside a motion step
+pub const MOTION_LANES_PER_STEP: usize = 8;
+pub const MOTION_SUBSTEPS: usize = 8;
+
+/// Step-time lookup table — index 0 is the slowest (eighth notes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum StepScale {
+    Eighth = 0,
+    Sixteenth = 1,
+    ThirtySecond = 2,
+    QuarterTriplet = 3,
+    EighthTriplet = 4,
+    SixteenthTriplet = 5,
+}
+
+impl StepScale {
+    pub fn label(self) -> &'static str {
+        match self {
+            StepScale::Eighth => "1/8",
+            StepScale::Sixteenth => "1/16",
+            StepScale::ThirtySecond => "1/32",
+            StepScale::QuarterTriplet => "1/4T",
+            StepScale::EighthTriplet => "1/8T",
+            StepScale::SixteenthTriplet => "1/16T",
+        }
+    }
+
+    /// Decode a raw scale byte; unknown values fall back to sixteenth.
+    pub fn from_u8(value: u8) -> StepScale {
+        match value {
+            0 => StepScale::Eighth,
+            1 => StepScale::Sixteenth,
+            2 => StepScale::ThirtySecond,
+            3 => StepScale::QuarterTriplet,
+            4 => StepScale::EighthTriplet,
+            5 => StepScale::SixteenthTriplet,
+            _ => StepScale::Sixteenth,
+        }
+    }
+}
+
+/// Add `offset` and skip any address that would have a high MSB byte.
+fn next_valid_base_address(previous: u32, offset: u32) -> u32 {
+    let mut next = previous + offset;
+    while next & 0x80808080 != 0 {
+        next += offset;
+    }
+    next
+}
+
+/// Computes addresses for tracks, clips and steps in the MC address map.
+///
+/// Construct once (`AddressMap::new`) and reuse — the per-track lists of clip
+/// base addresses are cached at construction time so per-step lookups are pure
+/// arithmetic.
+#[derive(Clone, Debug)]
+pub struct AddressMap {
+    clip_base_addresses: [[u32; CLIPS_PER_TRACK]; NUM_TRACKS],
+}
+
+impl Default for AddressMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AddressMap {
+    pub fn new() -> Self {
+        let mut rows = [[0u32; CLIPS_PER_TRACK]; NUM_TRACKS];
+        for trk in 0..NUM_TRACKS {
+            let mut row = [0u32; CLIPS_PER_TRACK];
+            row[0] = CLIP1_BASE_ADDR[trk];
+            for clip in 1..CLIPS_PER_TRACK {
+                row[clip] = next_valid_base_address(row[clip - 1], SEQ_CLIP_OFFSET);
+            }
+            rows[trk] = row;
+        }
+        AddressMap {
+            clip_base_addresses: rows,
+        }
+    }
+
+    // ------- track / clip ---------------------------------------------------
+
+    pub fn track_base(&self, trk_idx: usize) -> Result<u32> {
+        Ok(TRK_BASE_ADDR[Self::t(trk_idx)?])
+    }
+
+    pub fn track_settings_base(&self, trk_idx: usize) -> Result<u32> {
+        Ok(TRK_SETTINGS_BASE_ADDR[Self::t(trk_idx)?])
+    }
+
+    pub fn clip_base(&self, trk_idx: usize, clip_idx: usize) -> Result<u32> {
+        let t = Self::t(trk_idx)?;
+        let c = Self::c(clip_idx)?;
+        Ok(self.clip_base_addresses[t][c])
+    }
+
+    // ------- sequencer step addresses --------------------------------------
+
+    pub fn clip_params_address(&self, trk_idx: usize, clip_idx: usize) -> Result<u32> {
+        add_roland_address(self.clip_base(trk_idx, clip_idx)?, SEQ_PARAMS_OFFS)
+    }
+
+    pub fn note_step_address(&self, trk_idx: usize, clip_idx: usize, step_idx: usize) -> Result<u32> {
+        let s = Self::s(step_idx)? as u32;
+        let notes = add_roland_address(self.clip_base(trk_idx, clip_idx)?, SEQ_NOTE_OFFS)?;
+        add_roland_offset(notes, s * STEP_SIZE)
+    }
+
+    pub fn motion_step_address(
+        &self,
+        trk_idx: usize,
+        clip_idx: usize,
+        step_idx: usize,
+        lane_idx: usize,
+    ) -> Result<u32> {
+        if lane_idx >= MOTION_LANES_PER_STEP {
+            return Err(Error::Index(format!(
+                "motion lane out of range: {lane_idx}"
+            )));
+        }
+        let s = Self::s(step_idx)? as u32;
+        let motion = add_roland_address(self.clip_base(trk_idx, clip_idx)?, SEQ_MOTION_OFFS)?;
+        let step_bytes = s * STEP_SIZE;
+        let lane_bytes = lane_idx as u32 * roland_address_to_linear(MOTION_LANE_OFFSET)?;
+        add_roland_offset(motion, step_bytes + lane_bytes)
+    }
+
+    // ------- ZEN-Core tone descriptors --------------------------------------
+
+    /// Address of a ZEN-Core tone descriptor.
+    ///
+    /// Pass `clip_idx = None` for the *track* tone (loaded when the track's
+    /// sound source is set to TRACK), or `Some(0..15)` for one of the clip
+    /// tones.
+    pub fn zencore_tone_address(&self, trk_idx: usize, clip_idx: Option<usize>) -> Result<u32> {
+        let t = Self::t(trk_idx)?;
+        let slot = match clip_idx {
+            Some(clip) => Self::c(clip)?,
+            None => CLIPS_PER_TRACK,
+        } as u32;
+        let slot_size = roland_address_to_linear(ZENCORE_TONE_ALIGNMENT)?;
+        add_roland_offset(ZENCORE_TRACK_BASE[t], slot * slot_size)
+    }
+
+    // ------- bounds helpers -------------------------------------------------
+
+    fn t(i: usize) -> Result<usize> {
+        if i < NUM_TRACKS {
+            Ok(i)
+        } else {
+            Err(Error::Index(format!("track index out of range: {i}")))
+        }
+    }
+
+    fn c(i: usize) -> Result<usize> {
+        if i < CLIPS_PER_TRACK {
+            Ok(i)
+        } else {
+            Err(Error::Index(format!("clip index out of range: {i}")))
+        }
+    }
+
+    fn s(i: usize) -> Result<usize> {
+        if i < STEPS_PER_CLIP {
+            Ok(i)
+        } else {
+            Err(Error::Index(format!("step index out of range: {i}")))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_clip_address_has_high_msb() {
+        let map = AddressMap::new();
+        for trk in 0..NUM_TRACKS {
+            for clip in 0..CLIPS_PER_TRACK {
+                let base = map.clip_base(trk, clip).unwrap();
+                assert_eq!(base & 0x80808080, 0, "0x{base:08X}");
+            }
+        }
+    }
+
+    #[test]
+    fn zencore_tone_address() {
+        let map = AddressMap::new();
+        assert_eq!(map.zencore_tone_address(0, Some(0)).unwrap(), 0x30000000);
+        assert_eq!(
+            map.zencore_tone_address(0, None).unwrap(),
+            0x30000000 + 16 * ZENCORE_TONE_ALIGNMENT
+        );
+    }
+
+    #[test]
+    fn note_step_address_arithmetic() {
+        let map = AddressMap::new();
+        let clip0 = map.clip_base(0, 0).unwrap();
+        assert_eq!(
+            map.note_step_address(0, 0, 0).unwrap(),
+            clip0 + SEQ_NOTE_OFFS
+        );
+        assert_eq!(
+            map.note_step_address(0, 0, 4).unwrap(),
+            add_roland_offset(map.note_step_address(0, 0, 0).unwrap(), 4 * STEP_SIZE).unwrap()
+        );
+    }
+
+    #[test]
+    fn bounds_checked() {
+        let map = AddressMap::new();
+        assert!(map.clip_base(8, 0).is_err());
+        assert!(map.clip_base(0, 16).is_err());
+        assert!(map.note_step_address(0, 0, 128).is_err());
+    }
+}

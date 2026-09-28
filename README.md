@@ -5,15 +5,16 @@ grooveboxes via MIDI System Exclusive — read and write any sequencer
 step, change ZEN-Core synth parameters, switch scenes and clips, dump
 and restore whole projects, all from your code.
 
-Two parallel libraries that share the same data model and parameter
+Three parallel libraries that share the same data model and parameter
 table:
 
 | Library | Status | Tests |
 |---|---|---|
 | **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 70 / 70 |
 | **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 42 / 42 |
+| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 80 / 80 |
 
-Both libraries cover **~389 named ZEN-Core tone parameters** auto-generated
+All three libraries cover **~389 named ZEN-Core tone parameters** auto-generated
 from the official Jupiter-X/Xm MIDI Implementation, plus the full
 sequencer (notes + motion + pitch-bend), per-track settings, the system
 block, and full-project dump/restore. The parameter table works on the
@@ -65,6 +66,32 @@ let client = MCClient(transport: transport, modelID: .mc707)
 
 See [`swift_lib/README.md`](swift_lib/README.md) for the full Swift guide.
 
+## Quick start (Rust)
+
+```rust
+use mc_programmer::{LoopbackTransport, MCClient, ModelId, Pitch};
+
+let client = MCClient::new(
+    LoopbackTransport::new(ModelId::Mc707, 0xFF),
+    ModelId::Mc707.value(),
+);
+client.set_pattern(
+    1,
+    1,
+    &[
+        (Pitch::from("C1"), vec![1, 5, 9, 13]),
+        (Pitch::from("F#1"), vec![3, 7, 11, 15]),
+    ],
+    100,
+    true,
+)?;
+# Ok::<(), mc_programmer::Error>(())
+```
+
+For real hardware, enable `--features midir` and construct the client with
+`MidirTransport::connect("MC-707")?`.
+See [`rust_lib/README.md`](rust_lib/README.md) for Rust-specific build, API, and transport guidance.
+
 ---
 
 ## Repository layout
@@ -90,9 +117,15 @@ mc-programmer/
 │   ├── Examples/              ← executable target with bundled examples
 │   └── Tests/MCProgrammerTests/    ← XCTest suite (42 tests)
 │
+├── rust_lib/                 ← Rust crate (mc-programmer)
+│   ├── README.md             ← Rust-specific guide
+│   ├── src/                  ← library source
+│   ├── examples/             ← runnable LoopbackTransport examples
+│   └── tests/                ← integration and feature tests
+│
 ├── tools/
-│   └── gen_zencore_params.py  ← parses Jupiter-X PDF, emits parameter
-│                                tables for both libraries
+│   ├── gen_zencore_params.py ← emits Python + Swift, then updates Rust data
+│   └── gen_rust_zencore.py   ← Rust table generator used by the canonical script
 │
 └── reference/                 ← see reference/README.md
     ├── README.md              (download links + copyright policy)
@@ -103,9 +136,9 @@ mc-programmer/
 > **Note on Roland documentation.** This repository deliberately does
 > **not** bundle any of Roland's PDFs, firmware images, or extracted PDF
 > text — those are copyrighted and would put the repo at risk of a DMCA
-> takedown. The auto-generated parameter tables (`zencore_data.py` /
-> `ZenCoreData.swift`) are committed and contain only factual data
-> (offsets, sizes, ranges, technical labels), so the libraries work
+> takedown. The auto-generated parameter tables (`zencore_data.py`,
+> `ZenCoreData.swift`, and `zencore_data.rs`) are committed and contain only
+> factual data (offsets, sizes, ranges, technical labels), so the libraries work
 > out of the box with no downloads required. If you want to **regenerate
 > or extend** the parameter tables, [`reference/README.md`](reference/README.md)
 > has direct download links to Roland's official support pages and the
@@ -137,16 +170,24 @@ swift run MCProgrammerExamples           # runs the bundled offline examples
 
 42 tests; ~40 seconds (the project round-trip exercises ~15 KB per tone).
 
+### Rust
+
+```bash
+cd rust_lib
+cargo test --all-features
+cargo run --example four_on_the_floor
+```
+
+80 tests including unit, integration, feature-gated transport, and doctests.
+
 ### Regenerating the ZEN-Core parameter tables
 
-The auto-generated `python_lib/mc_programmer/zencore_data.py` and
-`swift_lib/Sources/MCProgrammer/ZenCoreData.swift` are committed, so no
-external tooling and **no Roland downloads** are required to use the
-libraries. To regenerate the tables from a fresh Jupiter-X PDF, follow
-the step-by-step in [`reference/README.md`](reference/README.md) — it
-walks you through downloading the PDF from Roland's official support
-page, extracting the parameter sections with `pdftotext`, and re-running
-the generator.
+The auto-generated `python_lib/mc_programmer/zencore_data.py`,
+`swift_lib/Sources/MCProgrammer/ZenCoreData.swift`, and
+`rust_lib/src/zencore_data.rs` are committed, so no external tooling or Roland
+downloads are required to use the libraries. To regenerate from a fresh
+Jupiter-X PDF, follow [`reference/README.md`](reference/README.md), then run
+`python tools/gen_zencore_params.py` to regenerate all three tables.
 
 ---
 
@@ -168,7 +209,7 @@ parameters across 12 substructures (Tone Common, MFX, PMT, Tone Partial
 ×4, Pitch/Filter/Amp Env ×4, LFO ×4, EQ ×4, Synth Common, Synth PMT,
 Synth Partial ×4), per-track settings, system/setup block, single-tone
 preset save/load, full-project save/load, scene/clip selection via
-Program Change, two MIDI transports (CoreMIDI native + python-rtmidi),
+Program Change, real MIDI transports for Python, Swift, and Rust,
 plus a `LoopbackTransport` fake-MC for offline development.
 
 **Pending** — drum kit tone parameters, scene-level "Part" parameters,
@@ -181,7 +222,7 @@ hardware exploration via `hack_tools.py` to find the SysEx addresses.
 ## Pushing to GitHub
 
 A helper script lives at [`scripts/push-to-github.sh`](scripts/push-to-github.sh).
-It runs both test suites, checks that no Roland-copyrighted files are
+It runs all three test suites, checks that no Roland-copyrighted files are
 about to leak, stages every change, creates a clean commit, and pushes
 to the configured GitHub remote (defaults to `git@github.com:douglas-carmichael/mc-programmer.git`).
 Before running it, create the empty repository on GitHub first — the

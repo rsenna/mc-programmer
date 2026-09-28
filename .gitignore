@@ -18,6 +18,9 @@ Packages/
 *.xcodeproj/
 DerivedData/
 
+# Rust / Cargo
+/rust_lib/target/
+
 # OS junk
 .DS_Store
 Thumbs.db

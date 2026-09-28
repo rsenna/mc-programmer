@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-"""Generate conventional ZEN-Core Tone parameter tables for both libraries.
+"""Generate canonical Python, Swift, and Rust ZEN-Core parameter tables.
 
 Reads the raw text extracted from the Jupiter-X/Xm MIDI Implementation PDF
 (``pdftotext -raw -f 76 -l 82 JUPITER-X_Xm_MIDI_imple_eng06_W.pdf``) and
-emits two files:
+emits the Python and Swift tables, then refreshes the Rust table from Python.
 
   * ``python_lib/mc_programmer/zencore_data.py``  — native Python dicts of ZCParam
   * ``swift_lib/Sources/MCProgrammer/ZenCoreData.swift`` — same data for Swift
+  * ``rust_lib/src/zencore_data.rs`` — same table data for Rust
 
-This script is the *only* place that knows about the PDF row format. Both
-language libraries consume the generated files. To refresh the tables when
-Roland publishes a new revision, drop the new PDF in the repo root, re-run
-``pdftotext``, and run this script.
+Rust derives ``rust_lib/src/zencore_data.rs`` from the committed Python table
+via ``tools/gen_rust_zencore.py``. This script is the only place that knows the
+PDF row format. To refresh the tables for a new Roland revision, regenerate
+Python and Swift here; the canonical generator then emits Rust from the fresh Python table.
 
-The MC family uses the **conventional ZEN-Core Tone** path: Tone Common +
-Tone PMT + Tone Partial 1-4 + Partial Pitch/Filter/Amp Env + Partial LFO +
-Partial EQ. This is the PCM/sample-based half of a Jupiter-X ZCore tone
-descriptor — *not* the SuperNATURAL Synth (SN-S) sub-section, which lives
-at ``[Tone Synth Common]`` / ``[Synth Partial]`` in the Jupiter-X document
-and is excluded from the section map below.
+The MC family uses both halves of the ZCore tone descriptor: the conventional
+Tone Common / PMT / Partial / Pitch-Filter-Amp Envs / LFO / EQ path and the
+Tone Synth Common / PMT / Partial substructures. All are included in the
+section map below.
 
 Per the ZC programming-video transcript, this parameter map applies as-is
 to the MC-101 / MC-707 / MV-1 — only the *base addresses* of the tone
@@ -29,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -285,9 +285,8 @@ DO NOT EDIT BY HAND. Regenerate with::
     python tools/gen_zencore_params.py
 
 Source: Roland Jupiter-X/Xm MIDI Implementation v1.06 (Apr 2022),
-``[ZCore]`` address map. The MC family uses the *conventional* ZEN-Core
-Tone path (Tone Common / PMT / Partial / Pitch-Filter-Amp Envs / LFO / EQ)
-— *not* the SuperNATURAL Synth sub-section that lives at ``[Synth Partial]``.
+``[ZCore]`` address map. Includes the conventional Tone path and the
+Tone Synth Common / PMT / Partial substructures used by the MC family.
 """
 from __future__ import annotations
 
@@ -305,9 +304,8 @@ SWIFT_HEADER = '''// Auto-generated conventional ZEN-Core Tone parameter tables.
 //     python tools/gen_zencore_params.py
 //
 // Source: Roland Jupiter-X/Xm MIDI Implementation v1.06 (Apr 2022),
-// [ZCore] address map. The MC family uses the *conventional* ZEN-Core
-// Tone path (Tone Common / PMT / Partial / Pitch-Filter-Amp Envs / LFO / EQ)
-// — *not* the SuperNATURAL Synth sub-section that lives at [Synth Partial].
+// [ZCore] address map. Includes the conventional Tone path and the
+// Tone Synth Common / PMT / Partial substructures used by the MC family.
 
 import Foundation
 
@@ -478,6 +476,15 @@ def main() -> int:
         f.write(emit_python(sections, totals))
     with open(sw_path, "w") as f:
         f.write(emit_swift(sections, totals))
+    python_lib = os.path.join(repo, "python_lib")
+    rust_generator = os.path.join(here, "gen_rust_zencore.py")
+    generator_env = os.environ.copy()
+    generator_env["PYTHONPATH"] = os.pathsep.join(
+        path for path in (python_lib, generator_env.get("PYTHONPATH", "")) if path
+    )
+    subprocess.run(
+        [sys.executable, rust_generator], cwd=repo, env=generator_env, check=True
+    )
 
     print(f"wrote {py_path}")
     print(f"wrote {sw_path}")

@@ -13,12 +13,12 @@ libraries derive from. Anything Roland-copyrighted is intentionally
 
 ## What's *not* here (and how to get it locally)
 
-The libraries' `zencore_data.py` / `ZenCoreData.swift` parameter tables
-are auto-generated from Roland's **Jupiter-X/Xm MIDI Implementation**
-PDF. Roland's PDFs are copyrighted, so they are **not** committed to
-this repository. The auto-generated tables themselves *are* committed,
-so the library works out of the box without you ever needing to
-download anything from Roland.
+The libraries' `zencore_data.py`, `ZenCoreData.swift`, and
+`zencore_data.rs` parameter tables are auto-generated from Roland's
+**Jupiter-X/Xm MIDI Implementation** PDF. Roland's PDFs are copyrighted, so
+they are **not** committed to this repository. The auto-generated tables
+themselves *are* committed, so the libraries work out of the box without you
+ever needing to download anything from Roland.
 
 You only need the source PDFs if you want to **regenerate or extend**
 the parameter tables. In that case, download the relevant documents
@@ -39,6 +39,7 @@ directory:
 
 After downloading the Jupiter-X PDF, regenerate the parameter tables:
 
+Regeneration requires Python 3, poppler, and `rustfmt` from a Rust toolchain.
 ```bash
 # extract the relevant Jupiter-X PDF pages to text (needs poppler)
 # macOS: brew install poppler  ·  Debian: apt install poppler-utils
@@ -52,6 +53,7 @@ pdftotext -raw -f 85 -l 88 \
   >> reference/tools_jp_zcore.txt
 
 python tools/gen_zencore_params.py
+# The canonical generator above also refreshes rust_lib/src/zencore_data.rs.
 ```
 
 The `.gitignore` is configured to **block** `reference/*.pdf`,
@@ -61,8 +63,8 @@ committed.
 
 ## Why the auto-generated parameter tables are OK to commit
 
-The committed `zencore_data.py` / `ZenCoreData.swift` files contain
-**facts**: parameter offsets, sizes, ranges, and short technical
+The committed `zencore_data.py`, `ZenCoreData.swift`, and `zencore_data.rs`
+files contain **facts**: parameter offsets, sizes, ranges, and short technical
 labels. Under US copyright law (*Feist Publications v. Rural Telephone
 Service*, 1991), facts are not copyrightable; only the *creative
 expression* used to present them is. Short functional terms like "Tone

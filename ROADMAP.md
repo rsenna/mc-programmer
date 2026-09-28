@@ -1,9 +1,10 @@
 # Roadmap
 
 What the libraries currently cover, what's still missing, and how to add
-the missing pieces. Both the Python (`python_lib/mc_programmer/`) and Swift
-(`swift_lib/Sources/MCProgrammer/`) packages share this roadmap — every
-feature ships in both, with parallel implementations and tests.
+the missing pieces. The Python (`python_lib/mc_programmer/`), Swift
+(`swift_lib/Sources/MCProgrammer/`), and Rust (`rust_lib/src/`) packages share
+this roadmap — every feature ships in all three, with parallel implementations
+and tests.
 
 ---
 
@@ -144,9 +145,9 @@ sub-block. Both are now in the framework:
 - [x] `pyproject.toml` for the Python package (`pip install -e python_lib`)
 - [x] Optional extras: `pip install mc_programmer[rtmidi]` and `mc_programmer[mido]`
 - [x] Swift Package manifest for SwiftPM
-- [x] `tools/gen_zencore_params.py` — single-file parser/generator that
-      reads the extracted Jupiter-X PDF text and emits both
-      `zencore_data.py` and `ZenCoreData.swift`
+- [x] `tools/gen_zencore_params.py` — parser/generator for the Python and Swift tables
+- [x] `tools/gen_rust_zencore.py` — generates `zencore_data.rs` from the committed Python table
+- [x] Rust Cargo crate with optional `midir` hardware transport
 
 ### Tests
 
@@ -154,6 +155,7 @@ sub-block. Both are now in the framework:
 - [x] Swift: 42 tests via `XCTest`, all passing, runs in ~40 seconds
       (project round-trip dominates the time — exercises ~15 KB per tone
       through chunked I/O)
+- [x] Rust: 80 tests via `cargo test --all-features`, all passing
 
 ---
 
@@ -211,8 +213,8 @@ address before the parameter table can be added safely.
 
 ### Quality-of-life improvements
 
-- [ ] CI: GitHub Actions workflow that runs both `python -m unittest`
-      and `swift test` on every push
+- [ ] CI: GitHub Actions workflow that runs `python -m unittest`,
+      `swift test`, and `cargo test --all-features` on every push
 - [ ] Publish `mc_programmer` to PyPI under a friendly version
 - [ ] Add the Swift package to the Swift Package Index
 - [ ] Hex-dump pretty-printer for debugging (decode a raw 256-byte step
@@ -241,21 +243,23 @@ address before the parameter table can be added safely.
    `tools/gen_zencore_params.py`'s `SECTION_NAME_MAP` if you've found a
    new ZCore substructure in the extracted Jupiter-X text, or
    re-extract from a newer Jupiter-X PDF revision. Run
-   `python tools/gen_zencore_params.py` to regenerate both
+   `python tools/gen_zencore_params.py` to regenerate
    `python_lib/mc_programmer/zencore_data.py` and
-   `swift_lib/Sources/MCProgrammer/ZenCoreData.swift`.
-2. **Adding a verified MC address**: drop the constants into
-   `python_lib/mc_programmer/addresses.py` and the matching Swift file, then
-   build a parameter table for it the same way (or, for opaque blobs,
-   add it to `Project` directly).
+   `swift_lib/Sources/MCProgrammer/ZenCoreData.swift`, then run
+   `PYTHONPATH=python_lib python3 tools/gen_rust_zencore.py` for
+   `rust_lib/src/zencore_data.rs`.
+2. **Adding a verified MC address**: add the matching constants to the Python,
+   Swift, and Rust address-map modules, then build a parameter table for it the
+   same way (or, for opaque blobs, add it to `Project` directly).
 3. **Probing for unverified addresses**: the original
    `hack_tools.py` from the test scripts (now removed from this repo
    but visible in git history) is the reference for memory-dump
    exploration on real MC hardware. The same approach can be ported
    into the new library by extending `MCClient` with a `walk_address_space`
    helper.
-4. Run both test suites and make sure everything still passes:
+4. Run all three test suites and make sure everything still passes:
    ```bash
    PYTHONPATH=python_lib python -m unittest python_lib.tests.test_mc_programmer
-   cd swift_lib && swift test
+   (cd swift_lib && swift test)
+   (cd rust_lib && cargo test --all-features)
    ```
