@@ -1195,3 +1195,38 @@ fn standalone_tone_load_rejects_later_invalid_region_before_writing() {
     assert!(error.to_string().contains("0x80"));
     assert_eq!(probe.snapshot(base, 1), vec![0xFF]);
 }
+
+#[test]
+fn client_rejects_invalid_model_id_before_transport_use() {
+    let c = MCClient::new(NullTransport::new(), 0xD5);
+    let error = c.read(0x2000_0000, 1).unwrap_err();
+    assert!(error.to_string().contains("model ID"));
+}
+
+#[test]
+fn read_param_rejects_width_larger_than_u32() {
+    let reply = build_dt1(ModelId::Mc707.value(), 0x3000_0000, &[0; 9]).unwrap();
+    let transport = NullTransport::with_responses(vec![reply]);
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    let error = c.read_param(0x3000_0000, 9).unwrap_err();
+    assert!(error.to_string().contains("size"));
+}
+
+#[test]
+fn write_param_rejects_width_larger_than_u32_before_writing() {
+    let transport = loopback();
+    let probe = transport.clone();
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    let error = c.write_param(0x2000_0000, 0x1234, 9).unwrap_err();
+    assert!(error.to_string().contains("size"));
+    assert_eq!(probe.snapshot(0x2000_0000, 1), vec![0xFF]);
+}
+
+#[test]
+fn read_param_rejects_oversized_response_before_shifting() {
+    let reply = build_dt1(ModelId::Mc707.value(), 0x3000_0000, &[0; 9]).unwrap();
+    let transport = NullTransport::with_responses(vec![reply]);
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    let error = c.read_param(0x3000_0000, 8).unwrap_err();
+    assert!(error.to_string().contains("response size"));
+}

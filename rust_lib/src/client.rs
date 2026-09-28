@@ -52,7 +52,7 @@ impl<T: Transport> MCClient<T> {
         MCClient {
             transport,
             addresses,
-            model_id: model_id & 0x7F,
+            model_id,
         }
     }
 
@@ -90,7 +90,18 @@ impl<T: Transport> MCClient<T> {
 
     /// Read a multi-byte parameter, MSB-first nibble-packed.
     pub fn read_param(&self, address: u32, size: usize) -> Result<u32> {
+        if size > 8 {
+            return Err(Error::Value(format!(
+                "parameter size {size} exceeds the 8-byte u32 packing limit"
+            )));
+        }
         let data = self.read(address, size as u32)?;
+        if data.len() > 8 {
+            return Err(Error::Value(format!(
+                "parameter response size {} exceeds the 8-byte u32 packing limit",
+                data.len()
+            )));
+        }
         let mut value = 0u32;
         for (i, &b) in data.iter().enumerate() {
             value |= u32::from(b & 0x0F) << (4 * (data.len() - i - 1));
@@ -99,6 +110,11 @@ impl<T: Transport> MCClient<T> {
     }
 
     pub fn write_param(&self, address: u32, value: u32, size: usize) -> Result<()> {
+        if size > 8 {
+            return Err(Error::Value(format!(
+                "parameter size {size} exceeds the 8-byte u32 packing limit"
+            )));
+        }
         if size == 1 {
             return self.write(address, &[(value & 0x7F) as u8]);
         }
