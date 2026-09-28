@@ -155,7 +155,7 @@ sub-block. Both are now in the framework:
 - [x] Swift: 42 tests via `XCTest`, all passing, runs in ~40 seconds
       (project round-trip dominates the time — exercises ~15 KB per tone
       through chunked I/O)
-- [x] Rust: 80 tests via `cargo test --all-features`, all passing
+- [x] Rust: 84 tests via `cargo test --all-features`, all passing
 
 ---
 

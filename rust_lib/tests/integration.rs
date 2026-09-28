@@ -39,7 +39,7 @@ fn checksum_is_complement_to_128() {
 
 #[test]
 fn dt1_round_trip() {
-    let msg = build_dt1(ModelId::Mc101.value(), 0x30000018, &[0x40]);
+    let msg = build_dt1(ModelId::Mc101.value(), 0x30000018, &[0x40]).unwrap();
     let parsed = parse_dt1_payload(&msg).unwrap();
     assert_eq!(parsed.address, 0x30000018);
     assert_eq!(parsed.data, [0x40]);
@@ -153,7 +153,7 @@ fn write_note_step_emits_sysex() {
 #[test]
 fn read_note_step_decodes_dt1_reply() {
     let empty = encode_note_step(&NoteStep::default());
-    let reply = build_dt1(ModelId::Mc707.value(), 0x20030000, &empty);
+    let reply = build_dt1(ModelId::Mc707.value(), 0x20030000, &empty).unwrap();
     let transport = NullTransport::with_responses(vec![reply]);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let step = c.read_note_step(0, 0, 0).unwrap();
@@ -815,7 +815,7 @@ fn zencore_parameter_decode_rejects_truncated_payload() {
 
 #[test]
 fn zencore_client_rejects_truncated_parameter_reply() {
-    let reply = build_dt1(ModelId::Mc707.value(), 0x3000_0000, &[0x00, 0x01]);
+    let reply = build_dt1(ModelId::Mc707.value(), 0x3000_0000, &[0x00, 0x01]).unwrap();
     let transport = NullTransport::with_responses(vec![reply]);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let error = c
@@ -1045,11 +1045,96 @@ fn oversized_system_block_is_rejected_before_writing() {
 #[test]
 fn short_rq1_without_checksum_is_ignored() {
     let transport = loopback();
-    let mut request = mc_programmer::build_rq1(ModelId::Mc707.value(), 0x2000_0000, 1);
+    let mut request = mc_programmer::build_rq1(ModelId::Mc707.value(), 0x2000_0000, 1).unwrap();
     request.remove(request.len() - 2);
     assert!(
         mc_programmer::Transport::transfer(&transport, &request, 0.1)
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn project_rejects_high_bit_payloads_before_any_write() {
+    let tone = || {
+        TonePreset::new(
+            "MC-707",
+            None,
+            vec![ToneRegion {
+                offset: 0,
+                label: "region".into(),
+                data: vec![0x01],
+            }],
+        )
+    };
+    let base = Project {
+        model: "MC-707".into(),
+        name: None,
+        tracks: vec![TrackDump {
+            track_number: 1,
+            settings: vec![0; 0x20],
+            track_tone: tone(),
+            clips: vec![ClipDump {
+                clip_number: 1,
+                step_scale: 0,
+                step_count: 1,
+                note_steps: vec![0; 256],
+                motion_steps: vec![0; 256],
+                pitchbend: vec![0; 256],
+                tone: tone(),
+            }],
+        }],
+        system_header: vec![0],
+        system_block: vec![0],
+    };
+    let mut cases = Vec::new();
+    let mut invalid = base.clone();
+    invalid.tracks[0].settings[0] = 0x80;
+    cases.push(("track settings", invalid));
+    let mut invalid = base.clone();
+    invalid.tracks[0].track_tone.regions[0].data[0] = 0x80;
+    cases.push(("track tone", invalid));
+    let mut invalid = base.clone();
+    invalid.tracks[0].clips[0].note_steps[0] = 0x80;
+    cases.push(("note steps", invalid));
+    let mut invalid = base.clone();
+    invalid.tracks[0].clips[0].motion_steps[0] = 0x80;
+    cases.push(("motion steps", invalid));
+    let mut invalid = base.clone();
+    invalid.tracks[0].clips[0].pitchbend[0] = 0x80;
+    cases.push(("pitchbend", invalid));
+    let mut invalid = base.clone();
+    invalid.tracks[0].clips[0].tone.regions[0].data[0] = 0x80;
+    cases.push(("clip tone", invalid));
+    let mut invalid = base.clone();
+    invalid.system_header[0] = 0x80;
+    cases.push(("system header", invalid));
+    let mut invalid = base;
+    invalid.system_block[0] = 0x80;
+    cases.push(("system block", invalid));
+
+    for (field, project) in cases {
+        let transport = loopback();
+        let probe = transport.clone();
+        let c = MCClient::new(transport, ModelId::Mc707.value());
+        let error = project.load_into(&c, false).unwrap_err();
+        assert!(error.to_string().contains("0x80"), "{field}: {error}");
+        assert_eq!(
+            probe.snapshot(mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0], 1),
+            vec![0xFF],
+            "{field} validation happened after a write"
+        );
+    }
+}
+
+#[test]
+fn chunked_write_rejects_high_bit_bytes_before_first_chunk() {
+    let transport = loopback();
+    let probe = transport.clone();
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    let mut data = vec![0x40; MCClient::<LoopbackTransport>::CHUNK_SIZE + 1];
+    data[MCClient::<LoopbackTransport>::CHUNK_SIZE] = 0x80;
+    let error = c.write_chunked(0x2000_0000, &data).unwrap_err();
+    assert!(error.to_string().contains("128"));
+    assert_eq!(probe.snapshot(0x2000_0000, 1), vec![0xFF]);
 }

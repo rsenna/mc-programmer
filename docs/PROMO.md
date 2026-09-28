@@ -201,7 +201,7 @@ match in marketing copy.
 
 > **A clean, layered MIDI Sys-Ex client library for the Roland MC
 > family, with the parameter table auto-generated from the official
-> Jupiter-X MIDI Implementation, 192 tests across three languages, an
+> Jupiter-X MIDI Implementation, 196 tests across three languages, an
 > in-memory `LoopbackTransport` so you can develop without hardware,
 > and a strict no-Roland-copyrighted-content policy. The Python, Swift,
 > and Rust implementations share the same address map and data model — pick

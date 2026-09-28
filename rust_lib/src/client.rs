@@ -23,7 +23,9 @@ use crate::addresses::{
 use crate::error::{Error, Result};
 use crate::notes::Pitch;
 use crate::preset::{region_size, tone_region_specs, TonePreset, ToneRegion};
-use crate::protocol::{build_dt1, build_rq1, model_name, parse_dt1_payload, universal_device_inquiry};
+use crate::protocol::{
+    build_dt1, build_rq1, model_name, parse_dt1_payload, universal_device_inquiry, validate_7bit_data,
+};
 use crate::sequencer::{decode_note_step, encode_note_step, NoteStep};
 use crate::transport::Transport;
 use crate::zencore::{self, lookup, substructure_offset, ParamGroup, ZCParam, ZCValue};
@@ -72,7 +74,7 @@ impl<T: Transport> MCClient<T> {
     // ---- low-level RQ1 / DT1 ----------------------------------------------
 
     pub fn read(&self, address: u32, count: u32) -> Result<Vec<u8>> {
-        let msg = build_rq1(self.model_id, address, count);
+        let msg = build_rq1(self.model_id, address, count)?;
         let reply = self.transport.transfer(&msg, 0.1)?;
         if reply.is_empty() {
             return Ok(Vec::new());
@@ -81,7 +83,7 @@ impl<T: Transport> MCClient<T> {
     }
 
     pub fn write(&self, address: u32, data: &[u8]) -> Result<()> {
-        let msg = build_dt1(self.model_id, address, data);
+        let msg = build_dt1(self.model_id, address, data)?;
         self.transport.transfer(&msg, 0.05)?;
         Ok(())
     }
@@ -515,6 +517,7 @@ impl<T: Transport> MCClient<T> {
     }
 
     pub fn write_chunked(&self, address: u32, data: &[u8]) -> Result<()> {
+        validate_7bit_data(data, "chunked DT1 payload")?;
         let mut offset = 0usize;
         while offset < data.len() {
             let n = Self::CHUNK_SIZE.min(data.len() - offset);

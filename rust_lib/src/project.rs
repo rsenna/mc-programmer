@@ -19,7 +19,7 @@ use crate::addresses::{
 use crate::client::MCClient;
 use crate::error::{Error, Result};
 use crate::preset::{bytes_to_hex, hex_to_bytes, TonePreset};
-use crate::protocol::model_name;
+use crate::protocol::{model_name, validate_7bit_data};
 use crate::transport::Transport;
 
 pub const PROJECT_FORMAT: &str = "mc_programmer.project.v1";
@@ -270,6 +270,8 @@ impl Project {
                 self.system_block.len()
             )));
         }
+        validate_7bit_data(&self.system_header, "project system_header")?;
+        validate_7bit_data(&self.system_block, "project system_block")?;
 
         // Validate the entire in-memory project before the first DT1 write.
         // A late bounds error would otherwise leave the device partially restored.
@@ -299,6 +301,7 @@ impl Project {
                     track.settings.len()
                 )));
             }
+            validate_7bit_data(&track.settings, "project track settings")?;
             for clip in &track.clips {
                 if !(1..=128).contains(&clip.step_count) {
                     return Err(Error::Value(format!(
@@ -326,6 +329,13 @@ impl Project {
                             data.len()
                         )));
                     }
+                    validate_7bit_data(
+                        data,
+                        &format!(
+                            "project track {} clip {} {name}",
+                            track.track_number, clip.clip_number
+                        ),
+                    )?;
                 }
             }
         }
@@ -378,6 +388,10 @@ impl Project {
             )));
         }
         for region in &tone.regions {
+            validate_7bit_data(
+                &region.data,
+                &format!("project {location} tone region {:?}", region.label),
+            )?;
             let region_offset = roland_address_to_linear(region.offset).map_err(|error| {
                 Error::Value(format!(
                     "project {location} tone region {:?}: {error}",

@@ -18,6 +18,7 @@ pub const DEVICE_ID: u8 = 0x10; // default Roland device ID
 
 pub const CMD_RQ1: u8 = 0x11; // data request 1
 pub const CMD_DT1: u8 = 0x12; // data set 1
+const MAX_7BIT_FIELD: u32 = 0x0FFF_FFFF;
 
 /// Known model identification bytes for the MC / MV family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +64,38 @@ pub fn roland_checksum(payload: &[u8]) -> u8 {
     ((128 - (sum % 128)) & 0x7F) as u8
 }
 
+fn validate_address(address: u32) -> Result<()> {
+    if address & 0x8080_8080 != 0 {
+        return Err(Error::Value(format!(
+            "SysEx address 0x{address:08X} contains a byte with its high bit set"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_model_id(model_id: u8) -> Result<()> {
+    if model_id > 0x7F {
+        return Err(Error::Value(format!(
+            "model ID 0x{model_id:02X} is not 7-bit"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_7bit_data(data: &[u8], context: &str) -> Result<()> {
+    if let Some((offset, byte)) = data
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, byte)| byte & 0x80 != 0)
+    {
+        return Err(Error::Value(format!(
+            "{context} byte at offset {offset} is 0x{byte:02X}; SysEx data must be 7-bit"
+        )));
+    }
+    Ok(())
+}
+
 fn address_bytes(address: u32) -> [u8; 4] {
     [
         ((address >> 24) & 0x7F) as u8,
@@ -86,7 +119,19 @@ fn length_bytes(count: u32) -> [u8; 4] {
 }
 
 /// Build a complete RQ1 (data request 1) Sys-Ex message.
-pub fn build_rq1(model_id: u8, address: u32, count: u32) -> Vec<u8> {
+///
+/// # Errors
+/// Returns an error when the address, request length, or model ID cannot be
+/// represented by 7-bit SysEx bytes.
+pub fn build_rq1(model_id: u8, address: u32, count: u32) -> Result<Vec<u8>> {
+    validate_address(address)?;
+    validate_model_id(model_id)?;
+    if count > MAX_7BIT_FIELD {
+        return Err(Error::Value(format!(
+            "RQ1 request length {count} exceeds the 28-bit SysEx limit"
+        )));
+    }
+
     let header: [u8; 8] = [
         SYSEX_START,
         ROLAND_ID,
@@ -94,23 +139,33 @@ pub fn build_rq1(model_id: u8, address: u32, count: u32) -> Vec<u8> {
         0x00,
         0x00,
         0x00,
-        model_id & 0x7F,
+        model_id,
         CMD_RQ1,
     ];
     let addr = address_bytes(address);
     let len = length_bytes(count);
-    let body: Vec<u8> = [addr.as_slice(), len.as_slice()].concat();
+    let mut body = Vec::with_capacity(8);
+    body.extend_from_slice(&addr);
+    body.extend_from_slice(&len);
     let checksum = roland_checksum(&body);
-    let mut out = Vec::with_capacity(8 + 8 + 1 + 1);
+    let mut out = Vec::with_capacity(8 + body.len() + 2);
     out.extend_from_slice(&header);
     out.extend_from_slice(&body);
     out.push(checksum);
     out.push(SYSEX_END);
-    out
+    Ok(out)
 }
 
 /// Build a complete DT1 (data set 1) Sys-Ex message.
-pub fn build_dt1(model_id: u8, address: u32, data: &[u8]) -> Vec<u8> {
+///
+/// # Errors
+/// Returns an error when the address, model ID, or payload contains a byte
+/// that cannot be represented by 7-bit SysEx data.
+pub fn build_dt1(model_id: u8, address: u32, data: &[u8]) -> Result<Vec<u8>> {
+    validate_address(address)?;
+    validate_model_id(model_id)?;
+    validate_7bit_data(data, "DT1 payload")?;
+
     let header: [u8; 8] = [
         SYSEX_START,
         ROLAND_ID,
@@ -118,20 +173,20 @@ pub fn build_dt1(model_id: u8, address: u32, data: &[u8]) -> Vec<u8> {
         0x00,
         0x00,
         0x00,
-        model_id & 0x7F,
+        model_id,
         CMD_DT1,
     ];
     let addr = address_bytes(address);
-    let mut body: Vec<u8> = Vec::with_capacity(4 + data.len());
+    let mut body = Vec::with_capacity(4 + data.len());
     body.extend_from_slice(&addr);
-    body.extend(data.iter().map(|&b| b & 0x7F));
+    body.extend_from_slice(data);
     let checksum = roland_checksum(&body);
-    let mut out = Vec::with_capacity(8 + body.len() + 1 + 1);
+    let mut out = Vec::with_capacity(8 + body.len() + 2);
     out.extend_from_slice(&header);
     out.extend_from_slice(&body);
     out.push(checksum);
     out.push(SYSEX_END);
-    out
+    Ok(out)
 }
 
 /// A parsed DT1 reply: the address it was sent to and the payload bytes.
@@ -182,7 +237,7 @@ mod tests {
 
     #[test]
     fn rq1_layout() {
-        let msg = build_rq1(0x5D, 0x30000000, 0x100);
+        let msg = build_rq1(0x5D, 0x30000000, 0x100).unwrap();
         assert_eq!(msg[0], 0xF0);
         assert_eq!(msg[1], 0x41);
         assert_eq!(msg[6], 0x5D);
@@ -195,7 +250,7 @@ mod tests {
     #[test]
     fn parse_dt1_round_trip() {
         let data = [0x40, 0x00, 0x01];
-        let msg = build_dt1(0x5E, 0x20000000, &data);
+        let msg = build_dt1(0x5E, 0x20000000, &data).unwrap();
         let parsed = parse_dt1_payload(&msg).unwrap();
         assert_eq!(parsed.address, 0x20000000);
         assert_eq!(parsed.data, data);
@@ -207,11 +262,30 @@ mod tests {
             parse_dt1_payload(&[0xF0, 0x41, 0xF7]),
             Err(Error::MessageTooShort(_))
         ));
-        let mut msg = build_dt1(0x5D, 0, &[0]);
+        let mut msg = build_dt1(0x5D, 0, &[0]).unwrap();
         msg[1] = 0x42;
         assert!(matches!(
             parse_dt1_payload(&msg),
             Err(Error::NotRoland(0x42))
         ));
+    }
+}
+
+#[cfg(test)]
+mod builder_validation_tests {
+    use super::{build_dt1, build_rq1};
+
+    #[test]
+    fn rq1_rejects_unencodable_address_and_length() {
+        for address in [0x8000_0000, 0x0080_0000, 0x0000_8000, 0x0000_0080] {
+            assert!(build_rq1(0x5D, address, 1).is_err());
+        }
+        assert!(build_rq1(0x5D, 0x3000_0000, 0x1000_0000).is_err());
+    }
+
+    #[test]
+    fn dt1_rejects_unencodable_address_and_payload() {
+        assert!(build_dt1(0x5D, 0x8000_0000, &[0]).is_err());
+        assert!(build_dt1(0x5D, 0x2000_0000, &[0x80]).is_err());
     }
 }

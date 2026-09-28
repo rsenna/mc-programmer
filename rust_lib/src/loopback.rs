@@ -159,9 +159,10 @@ impl Transport for LoopbackTransport {
                             .ok()
                             .and_then(|address| inner.memory.get(&address).copied())
                             .unwrap_or(inner.unread_byte)
+                            & 0x7F
                     })
                     .collect();
-                Ok(build_dt1(inner.model_id, address, &data))
+                Ok(build_dt1(inner.model_id, address, &data)?)
             }
             _ => Ok(Vec::new()),
         }
