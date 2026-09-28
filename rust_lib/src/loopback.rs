@@ -107,12 +107,15 @@ impl LoopbackTransport {
     }
 }
 
+/// Recognize a six-byte universal device inquiry regardless of device ID.
 fn is_identity_request(msg: &[u8]) -> bool {
     // F0 7E <dev> 06 01 F7
     msg.len() == 6 && msg[0] == 0xF0 && msg[1] == 0x7E && msg[3] == 0x06 && msg[4] == 0x01 && msg[5] == 0xF7
 }
 
 impl Transport for LoopbackTransport {
+    /// Emulate device inquiry, DT1 writes, and RQ1 reads against shared memory.
+    /// The timeout is unused; unsupported messages receive an empty reply.
     fn transfer(&self, message: &[u8], _timeout: f64) -> Result<Vec<u8>> {
         // Universal Identity Request → synthetic Identity Reply.
         if is_identity_request(message) {
@@ -168,6 +171,7 @@ impl Transport for LoopbackTransport {
         }
     }
 
+    /// Record a raw MIDI message and update scene and channel clip state for Program Change.
     fn send_raw(&self, message: &[u8]) -> Result<()> {
         let mut inner = self.inner.lock();
         inner.sent_raw.push(message.to_vec());
@@ -188,6 +192,7 @@ impl Transport for LoopbackTransport {
 
 /// Convenience: a loopback device whose model ID is MC-707.
 impl Default for LoopbackTransport {
+    /// Create an MC-707 loopback device with `0xFF` in unwritten memory.
     fn default() -> Self {
         Self::new(ModelId::Mc707, 0xFF)
     }

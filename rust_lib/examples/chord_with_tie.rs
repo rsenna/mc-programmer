@@ -7,6 +7,7 @@
 
 use mc_programmer::{encode_note_step, NoteComponent, NoteStep, SubStep};
 
+/// Print a labelled byte buffer in rows of sixteen hexadecimal bytes.
 fn hexdump(label: &str, raw: &[u8]) {
     println!("{label} ({} bytes):", raw.len());
     for (i, row) in raw.chunks(16).enumerate() {
@@ -19,6 +20,7 @@ fn hexdump(label: &str, raw: &[u8]) {
     }
 }
 
+/// Print encoded records for a polyphonic chord and a note tied across two steps.
 fn main() {
     // --- 1) A C-major chord on lanes 0..3 of one step --------------------
     let mut chord = NoteStep::default();

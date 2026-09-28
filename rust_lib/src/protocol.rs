@@ -37,6 +37,7 @@ impl ModelId {
 }
 
 impl From<ModelId> for u8 {
+    /// Convert a known model ID to its wire byte.
     fn from(id: ModelId) -> u8 {
         id as u8
     }
@@ -64,6 +65,7 @@ pub fn roland_checksum(payload: &[u8]) -> u8 {
     ((128 - (sum % 128)) & 0x7F) as u8
 }
 
+/// Reject packed addresses with a high bit set in any byte.
 fn validate_address(address: u32) -> Result<()> {
     if address & 0x8080_8080 != 0 {
         return Err(Error::Value(format!(
@@ -73,6 +75,7 @@ fn validate_address(address: u32) -> Result<()> {
     Ok(())
 }
 
+/// Reject model IDs that cannot be represented by a 7-bit SysEx byte.
 fn validate_model_id(model_id: u8) -> Result<()> {
     if model_id > 0x7F {
         return Err(Error::Value(format!(
@@ -82,6 +85,7 @@ fn validate_model_id(model_id: u8) -> Result<()> {
     Ok(())
 }
 
+/// Reject the first payload byte with its high bit set, reporting context and offset.
 pub(crate) fn validate_7bit_data(data: &[u8], context: &str) -> Result<()> {
     if let Some((offset, byte)) = data
         .iter()
@@ -96,6 +100,7 @@ pub(crate) fn validate_7bit_data(data: &[u8], context: &str) -> Result<()> {
     Ok(())
 }
 
+/// Split a packed Roland address into four bytes, masking each to seven bits.
 fn address_bytes(address: u32) -> [u8; 4] {
     [
         ((address >> 24) & 0x7F) as u8,
@@ -228,6 +233,7 @@ pub fn universal_device_inquiry() -> [u8; 6] {
 mod tests {
     use super::*;
 
+    /// Verify checksum wraparound for an empty payload and a single byte.
     #[test]
     fn checksum_is_complement_to_128() {
         // Sum of all bytes = 0 → 128 - 0 = 128 → & 0x7F = 0.
@@ -235,6 +241,7 @@ mod tests {
         assert_eq!(roland_checksum(&[0x40]), 0x40);
     }
 
+    /// Verify the RQ1 frame contains the expected manufacturer, model, address, and terminator.
     #[test]
     fn rq1_layout() {
         let msg = build_rq1(0x5D, 0x30000000, 0x100).unwrap();
@@ -247,6 +254,7 @@ mod tests {
         assert_eq!(*msg.last().unwrap(), 0xF7);
     }
 
+    /// Verify building and parsing a DT1 preserves its address and payload.
     #[test]
     fn parse_dt1_round_trip() {
         let data = [0x40, 0x00, 0x01];
@@ -256,6 +264,7 @@ mod tests {
         assert_eq!(parsed.data, data);
     }
 
+    /// Verify truncated messages and non-Roland manufacturer IDs return specific errors.
     #[test]
     fn parse_rejects_bad_framing() {
         assert!(matches!(
@@ -275,6 +284,7 @@ mod tests {
 mod builder_validation_tests {
     use super::{build_dt1, build_rq1};
 
+    /// Verify RQ1 rejects high address bits and lengths beyond 28 bits.
     #[test]
     fn rq1_rejects_unencodable_address_and_length() {
         for address in [0x8000_0000, 0x0080_0000, 0x0000_8000, 0x0000_0080] {
@@ -283,6 +293,7 @@ mod builder_validation_tests {
         assert!(build_rq1(0x5D, 0x3000_0000, 0x1000_0000).is_err());
     }
 
+    /// Verify DT1 rejects high bits in either its address or data.
     #[test]
     fn dt1_rejects_unencodable_address_and_payload() {
         assert!(build_dt1(0x5D, 0x8000_0000, &[0]).is_err());

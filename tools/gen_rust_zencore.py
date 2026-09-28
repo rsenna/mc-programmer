@@ -50,10 +50,12 @@ use crate::zencore::ZCParam;
 
 
 def rust_str(s: str) -> str:
+    """Quote a table string for Rust, escaping backslashes and double quotes."""
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def emit_param(p) -> str:
+    """Render one Python parameter descriptor as a Rust ZCParam constructor."""
     return "\n".join(
         (
             "    ZCParam::new(",
@@ -70,6 +72,7 @@ def emit_param(p) -> str:
 
 
 def main() -> int:
+    """Write and rustfmt the Rust table from committed Python data; return zero."""
     here = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.dirname(here)
     python_lib = os.path.join(repo, "python_lib")

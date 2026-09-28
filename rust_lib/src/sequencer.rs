@@ -46,6 +46,7 @@ pub enum SubStep {
 }
 
 impl SubStep {
+    /// Decode a substep mode, falling back to no subdivision for unknown values.
     pub fn from_u8(value: u8) -> SubStep {
         match value {
             0 => SubStep::None,
@@ -74,6 +75,7 @@ pub struct NoteComponent {
 }
 
 impl NoteComponent {
+    /// Create an unused note lane with default velocity and duration.
     pub const fn empty() -> Self {
         NoteComponent {
             note: EMPTY_NOTE,
@@ -84,16 +86,19 @@ impl NoteComponent {
         }
     }
 
+    /// Return whether this lane contains the empty-note sentinel.
     pub fn is_empty(&self) -> bool {
         self.note == EMPTY_NOTE
     }
 
+    /// Return whether the end-time byte marks a tie to the next step.
     pub fn ties_to_next(&self) -> bool {
         self.end_cents == END_TIME_TIE
     }
 }
 
 impl Default for NoteComponent {
+    /// Create an unused note lane with default timing.
     fn default() -> Self {
         Self::empty()
     }
@@ -121,6 +126,7 @@ impl NoteStep {
         })
     }
 
+    /// Copy nonempty note lanes in their existing order.
     pub fn active_components(&self) -> Vec<NoteComponent> {
         self.components
             .iter()
@@ -145,6 +151,7 @@ impl NoteStep {
 }
 
 impl Default for NoteStep {
+    /// Create sixteen empty note lanes with no substep subdivision.
     fn default() -> Self {
         NoteStep {
             components: vec![NoteComponent::empty(); NOTES_PER_STEP],
@@ -264,6 +271,8 @@ pub struct MotionStep {
 }
 
 impl MotionStep {
+    /// Build a motion step from exactly eight lane slots.
+    /// Reject other slot counts; individual lane lengths are not checked here.
     pub fn new(lanes: Vec<Option<Vec<u8>>>) -> Result<Self> {
         if lanes.len() != MOTION_LANES_PER_STEP {
             return Err(Error::Value(format!(
@@ -275,6 +284,7 @@ impl MotionStep {
 }
 
 impl Default for MotionStep {
+    /// Create eight unused motion lanes.
     fn default() -> Self {
         MotionStep {
             lanes: vec![None; MOTION_LANES_PER_STEP],
@@ -287,6 +297,7 @@ mod tests {
     use super::*;
     use crate::notes::note;
 
+    /// Verify note timing, ties, and subdivision survive encoding and decoding.
     #[test]
     fn round_trip_complex_step() {
         let mut comps = vec![NoteComponent::empty(); NOTES_PER_STEP];
@@ -313,6 +324,7 @@ mod tests {
         assert_eq!(decoded, step);
     }
 
+    /// Verify empty slots encode as `0x0F 0x0F` and decode back unchanged.
     #[test]
     fn empty_slot_round_trips() {
         let step = NoteStep::default();
@@ -322,6 +334,7 @@ mod tests {
         assert_eq!(decode_note_step(&raw).unwrap(), step);
     }
 
+    /// Verify a negative start time uses a two's-complement nibble pair.
     #[test]
     fn signed_start_cents_are_two_complement() {
         let mut step = NoteStep::default();

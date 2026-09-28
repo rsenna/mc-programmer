@@ -74,13 +74,16 @@ pub struct Project {
     pub system_block: Vec<u8>,
 }
 
+/// Serialize a nested tone using the tone preset JSON format.
 fn tone_value(t: &TonePreset) -> Value {
     t.to_value()
 }
 
+/// Parse a nested tone with the same format checks as a standalone preset.
 fn tone_from_value(v: &Value) -> Result<TonePreset> {
     TonePreset::from_value(v)
 }
+/// Require an object field and include its context in missing-field errors.
 fn required_field<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'a Value> {
     if !value.is_object() {
         return Err(Error::Json(format!("{context} must be a JSON object")));
@@ -90,6 +93,7 @@ fn required_field<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'
         .ok_or_else(|| Error::Json(format!("{context}.{field} is required")))
 }
 
+/// Read a required JSON string into an owned value, rejecting other types.
 fn required_string(value: &Value, field: &str, context: &str) -> Result<String> {
     required_field(value, field, context)?
         .as_str()
@@ -97,6 +101,7 @@ fn required_string(value: &Value, field: &str, context: &str) -> Result<String> 
         .ok_or_else(|| Error::Json(format!("{context}.{field} must be a string")))
 }
 
+/// Require a field containing a string or null; missing fields remain errors.
 fn required_optional_string(value: &Value, field: &str, context: &str) -> Result<Option<String>> {
     match required_field(value, field, context)? {
         Value::Null => Ok(None),
@@ -107,6 +112,7 @@ fn required_optional_string(value: &Value, field: &str, context: &str) -> Result
     }
 }
 
+/// Borrow a required JSON array, rejecting missing fields and other types.
 fn required_array<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'a [Value]> {
     required_field(value, field, context)?
         .as_array()
@@ -114,6 +120,7 @@ fn required_array<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'
         .ok_or_else(|| Error::Json(format!("{context}.{field} must be an array")))
 }
 
+/// Read a required unsigned integer that fits `u32` and the inclusive bounds.
 fn required_u32(value: &Value, field: &str, context: &str, min: u32, max: u32) -> Result<u32> {
     let raw = required_field(value, field, context)?
         .as_u64()
@@ -127,6 +134,7 @@ fn required_u32(value: &Value, field: &str, context: &str, min: u32, max: u32) -
     Ok(number)
 }
 
+/// Read a required unsigned integer that fits `usize` and the inclusive bounds.
 fn required_usize(value: &Value, field: &str, context: &str, min: usize, max: usize) -> Result<usize> {
     let raw = required_field(value, field, context)?
         .as_u64()
@@ -140,11 +148,13 @@ fn required_usize(value: &Value, field: &str, context: &str, min: usize, max: us
     Ok(number)
 }
 
+/// Decode a required hex string and attach the field context to parse errors.
 fn required_hex(value: &Value, field: &str, context: &str) -> Result<Vec<u8>> {
     let text = required_string(value, field, context)?;
     hex_to_bytes(&text).map_err(|error| Error::Json(format!("{context}.{field}: {error}")))
 }
 
+/// Serialize clip timing, sequencer bytes, and the nested tone to JSON.
 fn clip_value(c: &ClipDump) -> Value {
     json!({
         "clip_number": c.clip_number,
@@ -157,6 +167,7 @@ fn clip_value(c: &ClipDump) -> Value {
     })
 }
 
+/// Parse clip fields and their numeric bounds, using track and clip indices for diagnostics.
 fn clip_from_value(v: &Value, track_index: usize, clip_index: usize) -> Result<ClipDump> {
     let context = format!("project.tracks[{track_index}].clips[{clip_index}]");
     Ok(ClipDump {
@@ -170,6 +181,7 @@ fn clip_from_value(v: &Value, track_index: usize, clip_index: usize) -> Result<C
     })
 }
 
+/// Serialize a track with its settings, track tone, and captured clips.
 fn track_value(t: &TrackDump) -> Value {
     let clips: Vec<Value> = t.clips.iter().map(clip_value).collect();
     json!({
@@ -180,6 +192,7 @@ fn track_value(t: &TrackDump) -> Value {
     })
 }
 
+/// Parse a numbered track and its nested clips, reporting its index on field errors.
 fn track_from_value(v: &Value, track_index: usize) -> Result<TrackDump> {
     let context = format!("project.tracks[{track_index}]");
     let clips = required_array(v, "clips", &context)?
@@ -202,6 +215,7 @@ fn track_from_value(v: &Value, track_index: usize) -> Result<TrackDump> {
 }
 
 impl Project {
+    /// Create a project from captured tracks with empty system header and system block.
     pub fn new(model: impl Into<String>, name: Option<String>, tracks: Vec<TrackDump>) -> Self {
         Project {
             model: model.into(),
@@ -212,6 +226,7 @@ impl Project {
         }
     }
 
+    /// Serialize the project with its format tag, nested tracks, and hexadecimal system data.
     pub fn to_value(&self) -> Value {
         let tracks: Vec<Value> = self.tracks.iter().map(track_value).collect();
         let name = match &self.name {
@@ -228,6 +243,8 @@ impl Project {
         })
     }
 
+    /// Parse a project object, validating its format tag, required fields, and numeric bounds.
+    /// Device-specific compatibility and payload sizes are checked when restoring.
     pub fn from_value(v: &Value) -> Result<Self> {
         let format = required_string(v, "format", "project")?;
         if format != PROJECT_FORMAT {
@@ -250,6 +267,8 @@ impl Project {
         })
     }
 
+    /// Preflight all project indices, payloads, and tone regions before device writes.
+    /// `force` bypasses model matching only; size, address, and 7-bit checks still apply.
     fn validate_for_load<T: Transport>(&self, client: &MCClient<T>, force: bool) -> Result<()> {
         let expected = model_name(client.model_id);
         if !force && !self.model.is_empty() && self.model != expected {
@@ -369,6 +388,7 @@ impl Project {
         Ok(())
     }
 
+    /// Validate a nested tone for its destination, including track and clip context in errors.
     fn validate_tone(
         tone: &TonePreset,
         expected: &str,
@@ -384,20 +404,24 @@ impl Project {
         tone.validate_for_write(expected, force, base_address, &location)
     }
 
+    /// Serialize the project as indented JSON with hexadecimal byte blocks.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(&self.to_value()).expect("serializing a serde_json::Value cannot fail")
     }
 
+    /// Parse JSON text as a project, returning JSON errors for malformed input.
     pub fn from_json(raw: &str) -> Result<Self> {
         let v: Value = serde_json::from_str(raw).map_err(|e| Error::Json(format!("invalid JSON in project: {e}")))?;
         Self::from_value(&v)
     }
 
+    /// Write the project as indented JSON, replacing an existing file at `path`.
     pub fn save(&self, path: &str) -> Result<()> {
         fs::write(path, self.to_json())?;
         Ok(())
     }
 
+    /// Read and parse a project file, propagating I/O and JSON errors.
     pub fn load(path: &str) -> Result<Self> {
         let raw = fs::read_to_string(path)?;
         Self::from_json(&raw)

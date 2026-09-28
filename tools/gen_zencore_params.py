@@ -412,6 +412,7 @@ SECTION_NAME_MAP: Dict[str, str] = {
 
 
 def main() -> int:
+    """Regenerate all three parameter tables from extracted text; return one if input is unavailable."""
     here = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.dirname(here)
     raw_path = os.path.join(repo, "reference", "tools_jp_zcore.txt")

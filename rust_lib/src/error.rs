@@ -33,6 +33,7 @@ pub enum Error {
 }
 
 impl fmt::Display for Error {
+    /// Format a readable diagnostic, preserving messages from underlying I/O errors.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::MessageTooShort(n) => write!(f, "DT1 message too short: {n} bytes"),
@@ -48,6 +49,7 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {
+    /// Expose the underlying I/O error when this error wraps one.
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Error::Io(e) => Some(e),
@@ -57,6 +59,7 @@ impl std::error::Error for Error {
 }
 
 impl From<std::io::Error> for Error {
+    /// Wrap a filesystem I/O failure in the shared library error type.
     fn from(e: std::io::Error) -> Self {
         Error::Io(e)
     }

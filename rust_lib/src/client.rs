@@ -44,10 +44,13 @@ pub struct MCClient<T: Transport> {
 }
 
 impl<T: Transport> MCClient<T> {
+    /// Create a client with the standard address map and supplied model ID.
+    /// Construction performs no device inquiry; SysEx operations validate the ID.
     pub fn new(transport: T, model_id: u8) -> Self {
         Self::with_addresses(transport, model_id, AddressMap::new())
     }
 
+    /// Create a client from a transport, model ID, and precomputed address map.
     pub fn with_addresses(transport: T, model_id: u8, addresses: AddressMap) -> Self {
         MCClient {
             transport,
@@ -73,6 +76,8 @@ impl<T: Transport> MCClient<T> {
 
     // ---- low-level RQ1 / DT1 ----------------------------------------------
 
+    /// Request `count` bytes at a packed Roland address and return the DT1 payload.
+    /// An empty transport reply yields an empty vector; framing and transport errors propagate.
     pub fn read(&self, address: u32, count: u32) -> Result<Vec<u8>> {
         let msg = build_rq1(self.model_id, address, count)?;
         let reply = self.transport.transfer(&msg, 0.1)?;
@@ -82,6 +87,8 @@ impl<T: Transport> MCClient<T> {
         Ok(parse_dt1_payload(&reply)?.data)
     }
 
+    /// Send 7-bit data to a packed Roland address in a DT1 message.
+    /// Invalid model IDs, addresses, or payload bytes fail before transport use.
     pub fn write(&self, address: u32, data: &[u8]) -> Result<()> {
         let msg = build_dt1(self.model_id, address, data)?;
         self.transport.transfer(&msg, 0.05)?;
@@ -109,6 +116,9 @@ impl<T: Transport> MCClient<T> {
         Ok(value)
     }
 
+    /// Write a value using up to eight wire bytes.
+    /// A size of one writes the low seven bits; other sizes write the low
+    /// `size` nibbles, most significant first. Sizes above eight return an error.
     pub fn write_param(&self, address: u32, value: u32, size: usize) -> Result<()> {
         if size > 8 {
             return Err(Error::Value(format!(
@@ -126,6 +136,7 @@ impl<T: Transport> MCClient<T> {
 
     // ---- sequencer ---------------------------------------------------------
 
+    /// Read and decode a note record using zero-based track, clip, and step indices.
     pub fn read_note_step(&self, trk_idx: usize, clip_idx: usize, step_idx: usize) -> Result<NoteStep> {
         let addr = self
             .addresses
@@ -134,6 +145,7 @@ impl<T: Transport> MCClient<T> {
         decode_note_step(&raw)
     }
 
+    /// Encode and write a note record using zero-based track, clip, and step indices.
     pub fn write_note_step(&self, trk_idx: usize, clip_idx: usize, step_idx: usize, step: &NoteStep) -> Result<()> {
         let addr = self
             .addresses
@@ -160,6 +172,8 @@ impl<T: Transport> MCClient<T> {
 
     // ---- ZEN-Core ----------------------------------------------------------
 
+    /// Read raw coarse tune, where 64 is centered; an empty reply yields zero.
+    /// Indices are zero-based; `None` selects the track tone.
     pub fn read_coarse_tune(&self, trk_idx: usize, clip_idx: Option<usize>) -> Result<u8> {
         let base = self.addresses.zencore_tone_address(trk_idx, clip_idx)?;
         let addr = add_roland_address(base, TONE_COMMON_COARSE_TUNE_OFFS)?;
@@ -167,6 +181,8 @@ impl<T: Transport> MCClient<T> {
         Ok(data.first().copied().unwrap_or(0))
     }
 
+    /// Clamp raw coarse tune to `16..=112` and write it to the selected tone.
+    /// Indices are zero-based; `None` selects the track tone.
     pub fn write_coarse_tune(&self, trk_idx: usize, clip_idx: Option<usize>, value: u8) -> Result<()> {
         // MC range is 16..112 with 64 = center, per ZC video / zen_core_tools.
         let clamped = value.clamp(16, 112);
@@ -185,6 +201,8 @@ impl<T: Transport> MCClient<T> {
 
     // ---- ZEN-Core: generic parameter access -------------------------------
 
+    /// Combine the tone, substructure, and parameter offsets into a packed address.
+    /// Track and clip indices are zero-based; partial numbers are `1..=4`.
     fn zc_param_address(
         &self,
         trk_idx: usize,
@@ -237,6 +255,8 @@ impl<T: Transport> MCClient<T> {
 
     // Convenience helpers built on the generic accessors.
 
+    /// Read the tone name, or return an empty string when no value is received.
+    /// Track and clip indices are zero-based; `None` selects the track tone.
     pub fn read_tone_name(&self, trk_idx: usize, clip_idx: Option<usize>) -> Result<String> {
         // Roland labels this field just "Name" → snake_case "name".
         match self.read_zc_param(trk_idx, clip_idx, "name", ParamGroup::Common, 1)? {
@@ -245,6 +265,8 @@ impl<T: Transport> MCClient<T> {
         }
     }
 
+    /// Write a name through the fixed-width ASCII parameter codec.
+    /// Track and clip indices are zero-based; `None` selects the track tone.
     pub fn write_tone_name(&self, trk_idx: usize, clip_idx: Option<usize>, name: &str) -> Result<()> {
         self.write_zc_param(trk_idx, clip_idx, "name", name, ParamGroup::Common, 1)
     }
@@ -268,6 +290,7 @@ impl<T: Transport> MCClient<T> {
         }
     }
 
+    /// Validate a front-panel track number against this model and convert it to zero-based.
     fn track_to_idx(&self, track: u32) -> Result<usize> {
         let max = self.num_tracks() as u32;
         if !(1..=max).contains(&track) {
@@ -279,6 +302,7 @@ impl<T: Transport> MCClient<T> {
         Ok((track - 1) as usize)
     }
 
+    /// Convert a front-panel clip number in `1..=16` to a zero-based index.
     fn clip_to_idx(clip: u32) -> Result<usize> {
         if !(1..=16).contains(&clip) {
             return Err(Error::Index(format!(
@@ -288,6 +312,7 @@ impl<T: Transport> MCClient<T> {
         Ok((clip - 1) as usize)
     }
 
+    /// Convert a front-panel step number in `1..=128` to a zero-based index.
     fn step_to_idx(step: u32) -> Result<usize> {
         if !(1..=128).contains(&step) {
             return Err(Error::Index(format!(
@@ -341,6 +366,8 @@ impl<T: Transport> MCClient<T> {
         Ok(()) // all 16 lanes full — silently drop, like the hardware does
     }
 
+    /// Fill available lanes in following steps for the remaining note duration.
+    /// Indices are zero-based; continuation stops at the clip boundary and skips full steps.
     fn tie_following(&self, ti: usize, ci: usize, si: usize, midi: u8, velocity: u8, length_steps: f64) -> Result<()> {
         let mut remaining = length_steps - 1.0;
         let mut cur = si + 1;
@@ -411,12 +438,16 @@ impl<T: Transport> MCClient<T> {
 
     // ---- coarse tune in semitones (musician units) -----------------------
 
+    /// Read coarse tune relative to center in semitones using front-panel numbering.
+    /// Pass `None` for the track tone; an empty device reply maps to -64.
     pub fn read_coarse_tune_semitones(&self, track: u32, clip: Option<u32>) -> Result<i32> {
         let ti = self.track_to_idx(track)?;
         let ci = clip.map(Self::clip_to_idx).transpose()?;
         Ok(self.read_coarse_tune(ti, ci)? as i32 - 64)
     }
 
+    /// Write coarse tune in `-48..=48` semitones using front-panel numbering.
+    /// Pass `None` for the track tone; out-of-range tuning returns an error.
     pub fn write_coarse_tune_semitones(&self, track: u32, clip: Option<u32>, semitones: i32) -> Result<()> {
         if !(-48..=48).contains(&semitones) {
             return Err(Error::Value(format!(
@@ -450,6 +481,8 @@ impl<T: Transport> MCClient<T> {
         names
     }
 
+    /// Describe the first matching parameter name with its group, offset, size, and range.
+    /// Return an index error if no registered parameter has that name.
     pub fn describe_parameter(&self, name: &str) -> Result<String> {
         for (group, table) in zencore::ALL_TABLES {
             if let Some(p) = table.iter().find(|p| p.name == name) {
@@ -474,6 +507,7 @@ impl<T: Transport> MCClient<T> {
     //
     // The MC family does **not** use Bank Select for tone/patch selection.
 
+    /// Send Program Change for scene `1..=128` on control channel `1..=16`.
     pub fn select_scene(&self, scene_number: u32, control_channel: u32) -> Result<()> {
         if !(1..=128).contains(&scene_number) {
             return Err(Error::Index(format!(
@@ -489,6 +523,8 @@ impl<T: Transport> MCClient<T> {
         self.transport.send_raw(&[status, (scene_number - 1) as u8])
     }
 
+    /// Select clip `1..=16` on a front-panel track using Program Change.
+    /// The MIDI channel defaults to the track number; explicit channels must be `1..=16`.
     pub fn select_clip(&self, track: u32, clip_number: u32, track_channel: Option<u32>) -> Result<()> {
         if !(1..=16).contains(&clip_number) {
             return Err(Error::Index(format!(
@@ -513,6 +549,8 @@ impl<T: Transport> MCClient<T> {
     /// Conservative upper bound for one Sys-Ex payload.
     pub const CHUNK_SIZE: usize = 0x80;
 
+    /// Read a block in requests of at most [`Self::CHUNK_SIZE`] bytes.
+    /// Advance using Roland address arithmetic and replace empty replies with zeroes.
     pub fn read_chunked(&self, address: u32, count: usize) -> Result<Vec<u8>> {
         let mut out = Vec::with_capacity(count);
         let mut offset = 0usize;
@@ -532,6 +570,8 @@ impl<T: Transport> MCClient<T> {
         Ok(out)
     }
 
+    /// Write a block in chunks of at most [`Self::CHUNK_SIZE`] bytes.
+    /// Validate all payload bytes as 7-bit before sending the first chunk.
     pub fn write_chunked(&self, address: u32, data: &[u8]) -> Result<()> {
         validate_7bit_data(data, "chunked DT1 payload")?;
         let mut offset = 0usize;
@@ -591,6 +631,9 @@ impl<T: Transport> MCClient<T> {
         self.load_tone_with_force(track, clip, preset, false)
     }
 
+    /// Validate and restore a preset using front-panel track and clip numbers.
+    /// `None` selects the track tone; `force` bypasses model matching only,
+    /// while region bounds and payload validation still run before any writes.
     pub(crate) fn load_tone_with_force(
         &self,
         track: u32,

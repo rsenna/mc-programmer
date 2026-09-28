@@ -99,6 +99,7 @@ pub enum ZCValue {
 }
 
 impl ZCValue {
+    /// Return the integer value, or `None` for a string variant.
     pub fn as_int(&self) -> Option<i32> {
         match self {
             ZCValue::Int(v) => Some(*v),
@@ -106,6 +107,7 @@ impl ZCValue {
         }
     }
 
+    /// Borrow the string value, or return `None` for an integer variant.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             ZCValue::Str(s) => Some(s.as_str()),
@@ -115,18 +117,21 @@ impl ZCValue {
 }
 
 impl From<i32> for ZCValue {
+    /// Wrap an integer as a ZEN-Core parameter value without range validation.
     fn from(v: i32) -> Self {
         ZCValue::Int(v)
     }
 }
 
 impl From<&str> for ZCValue {
+    /// Copy a string into a ZEN-Core parameter value.
     fn from(s: &str) -> Self {
         ZCValue::Str(s.to_string())
     }
 }
 
 impl From<String> for ZCValue {
+    /// Store an owned string as a ZEN-Core parameter value.
     fn from(s: String) -> Self {
         ZCValue::Str(s)
     }
@@ -161,6 +166,8 @@ pub struct ZCParam {
 }
 
 impl ZCParam {
+    /// Build a parameter descriptor with a zero default and unsigned encoding.
+    /// Infer ASCII fields from a size of at least eight bytes and range `32..=127`.
     pub const fn new(
         name: &'static str,
         offset: u32,
@@ -258,6 +265,8 @@ impl ZCParam {
         Ok(ZCValue::Int(v))
     }
 
+    /// Truncate to the field width, mask characters to seven bits, and pad with spaces.
+    /// Replace resulting nonprintable bytes with `?`.
     fn encode_ascii(&self, value: &str) -> Vec<u8> {
         let size = self.size as usize;
         let mut out: Vec<u8> = value
@@ -277,6 +286,7 @@ impl ZCParam {
             .collect()
     }
 
+    /// Decode up to the field width, replace nonprintable bytes with spaces, and trim the end.
     fn decode_ascii(&self, raw: &[u8]) -> String {
         let mut s = String::new();
         for &b in raw.iter().take(self.size as usize) {
@@ -316,6 +326,7 @@ pub enum ParamGroup {
 }
 
 impl ParamGroup {
+    /// Return the canonical snake_case name of this parameter group.
     pub fn as_str(self) -> &'static str {
         match self {
             ParamGroup::Common => "common",
@@ -414,6 +425,7 @@ pub fn substructure_offset(group: ParamGroup, partial_idx: usize) -> Result<u32>
 mod tests {
     use super::*;
 
+    /// Verify partial numbering, standard strides, and the larger LFO stride.
     #[test]
     fn partial_offset_layout() {
         assert_eq!(
@@ -436,6 +448,7 @@ mod tests {
         assert!(partial_offset(5, PARTIAL_BASE_OFFS, PARTIAL_STRIDE).is_err());
     }
 
+    /// Verify the generated tone-name descriptor selects the 16-byte ASCII codec.
     #[test]
     fn name_field_is_ascii() {
         let p = lookup(ParamGroup::Common, "name").unwrap();
@@ -443,6 +456,7 @@ mod tests {
         assert_eq!(p.size, 16);
     }
 
+    /// Verify coarse tune uses one wire byte and decodes to the original integer.
     #[test]
     fn coarse_tune_round_trip() {
         let p = lookup(ParamGroup::Common, "tone_coarse_tune").unwrap();

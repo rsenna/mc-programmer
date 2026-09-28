@@ -34,6 +34,7 @@ pub const TOM_HIGH: u8 = 48; // C2
 pub const CRASH: u8 = 49; // C#2
 pub const RIDE: u8 = 51; // D#2
 
+/// Map an uppercase note spelling, including sharps and flats, to semitones above C.
 fn note_offset(letter: &str) -> Option<i32> {
     Some(match letter {
         "C" => 0,
@@ -139,6 +140,7 @@ pub enum Pitch {
 }
 
 impl Pitch {
+    /// Resolve a note name or MIDI number, rejecting values outside `0..=127`.
     pub fn resolve(&self) -> Result<u8> {
         match self {
             Pitch::Midi(n) => {
@@ -156,18 +158,21 @@ impl Pitch {
 }
 
 impl From<u8> for Pitch {
+    /// Wrap a MIDI number without validation; [`Pitch::resolve`] checks its range.
     fn from(n: u8) -> Self {
         Pitch::Midi(n)
     }
 }
 
 impl From<&str> for Pitch {
+    /// Copy a note name for later parsing by [`Pitch::resolve`].
     fn from(s: &str) -> Self {
         Pitch::Note(s.to_string())
     }
 }
 
 impl From<String> for Pitch {
+    /// Store an owned note name for later parsing by [`Pitch::resolve`].
     fn from(s: String) -> Self {
         Pitch::Note(s)
     }
@@ -177,6 +182,7 @@ impl From<String> for Pitch {
 mod tests {
     use super::*;
 
+    /// Verify common drum constants and names follow the Roland octave convention.
     #[test]
     fn drum_keys() {
         assert_eq!(KICK, 36);
@@ -186,6 +192,7 @@ mod tests {
         assert_eq!(note("A#1").unwrap(), 46);
     }
 
+    /// Verify sharp and flat spellings parse independently of letter case.
     #[test]
     fn parses_accidentals_and_case() {
         assert_eq!(note("C3").unwrap(), 60);
@@ -194,6 +201,7 @@ mod tests {
         assert_eq!(note("Bb-1").unwrap(), 22);
     }
 
+    /// Verify Roland negative octaves include MIDI zero at C-2.
     #[test]
     fn negative_octaves() {
         // Roland convention: C3 = 60, so C-2 is the lowest note (0).
@@ -201,11 +209,13 @@ mod tests {
         assert_eq!(note("C-2").unwrap(), 0);
     }
 
+    /// Verify a note without an octave uses octave 3.
     #[test]
     fn default_octave_is_middle() {
         assert_eq!(note("C").unwrap(), 60);
     }
 
+    /// Verify every valid MIDI number survives conversion to a name and back.
     #[test]
     fn name_round_trips_all_midi() {
         for n in 0..=127u8 {
@@ -214,6 +224,7 @@ mod tests {
         }
     }
 
+    /// Verify invalid spellings and notes beyond the MIDI range return errors.
     #[test]
     fn rejects_out_of_range() {
         assert!(note("C9").is_err());
@@ -221,6 +232,7 @@ mod tests {
         assert!(note("Hzz").is_err());
     }
 
+    /// Verify both numeric and named pitch variants resolve to MIDI numbers.
     #[test]
     fn pitch_resolves() {
         assert_eq!(Pitch::from(60).resolve().unwrap(), 60);

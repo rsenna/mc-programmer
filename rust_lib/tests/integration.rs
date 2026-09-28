@@ -11,14 +11,17 @@ use mc_programmer::{
     EMPTY_NOTE,
 };
 
+/// Create an MC-707 memory transport whose unwritten bytes are `0xFF`.
 fn loopback() -> LoopbackTransport {
     LoopbackTransport::new(ModelId::Mc707, 0xFF)
 }
 
+/// Create an MC-707 client over a fresh loopback device.
 fn client() -> MCClient<LoopbackTransport> {
     MCClient::new(loopback(), ModelId::Mc707.value())
 }
 
+/// Create a four-track MC-101 client over a fresh loopback device.
 fn client_101() -> MCClient<LoopbackTransport> {
     let t = LoopbackTransport::new(ModelId::Mc101, 0xFF);
     MCClient::new(t, ModelId::Mc101.value())
@@ -675,6 +678,7 @@ fn mc101_load_refuses_mc707_project() {
     assert!(err.to_string().contains("MC-101"));
 }
 
+/// Verify invalid in-memory track and clip numbers return errors without panicking.
 #[test]
 fn malformed_project_track_clip_numbers_error_not_panic() {
     let c = client();
@@ -717,6 +721,7 @@ fn malformed_project_track_clip_numbers_error_not_panic() {
     assert!(err.to_string().contains("clip_number"));
 }
 
+/// Verify JSON parsing rejects track zero before a project can be restored.
 #[test]
 fn malformed_project_json_track_zero_is_rejected_during_parse() {
     let json = r#"{
@@ -735,6 +740,7 @@ fn malformed_project_json_track_zero_is_rejected_during_parse() {
     assert!(err.to_string().contains("track_number"));
 }
 
+/// Verify missing track numbers and string-valued clip numbers fail JSON parsing.
 #[test]
 fn malformed_project_json_requires_numbered_fields() {
     let missing_track_number = r#"{
@@ -766,6 +772,7 @@ fn malformed_project_json_requires_numbered_fields() {
     assert!(err.to_string().contains("clip_number"));
 }
 
+/// Verify forced MC-707 restores reject tracks absent on the MC-101 before writing track 1.
 #[test]
 fn forced_cross_model_load_validates_every_track_before_writing() {
     let transport = LoopbackTransport::new(ModelId::Mc101, 0xFF);
@@ -840,6 +847,7 @@ fn short_rq1_returns_empty_reply_without_panicking() {
     );
 }
 
+/// Verify a short settings block leaves the destination track untouched.
 #[test]
 fn project_rejects_wrong_track_settings_size_before_writing() {
     let transport = loopback();
@@ -864,6 +872,7 @@ fn project_rejects_wrong_track_settings_size_before_writing() {
         vec![0xFF]
     );
 }
+/// Verify an unrecognized but 7-bit step scale is restored without normalization.
 #[test]
 fn project_preserves_unknown_7bit_step_scale() {
     let transport = loopback();
@@ -896,6 +905,7 @@ fn project_preserves_unknown_7bit_step_scale() {
     );
 }
 
+/// Verify a non-MIDI step scale is rejected before track settings are written.
 #[test]
 fn project_rejects_high_bit_step_scale_before_writing() {
     let transport = loopback();
@@ -962,6 +972,7 @@ fn project_rejects_partial_step_records_before_writing() {
     );
 }
 
+/// Verify a tone region beyond its slot prevents all project writes.
 #[test]
 fn project_rejects_tone_region_outside_descriptor_before_writing() {
     let transport = loopback();
@@ -995,6 +1006,7 @@ fn project_rejects_tone_region_outside_descriptor_before_writing() {
     );
 }
 
+/// Verify forced cross-model restore also bypasses nested tone model tags.
 #[test]
 fn force_overrides_nested_tone_model_tags() {
     let transport = LoopbackTransport::new(ModelId::Mc101, 0xFF);
@@ -1027,6 +1039,7 @@ fn force_overrides_nested_tone_model_tags() {
     );
 }
 
+/// Verify an oversized system block leaves system memory untouched.
 #[test]
 fn oversized_system_block_is_rejected_before_writing() {
     let transport = loopback();
@@ -1054,6 +1067,7 @@ fn short_rq1_without_checksum_is_ignored() {
     );
 }
 
+/// Verify every project payload category rejects high-bit data before writing track settings.
 #[test]
 fn project_rejects_high_bit_payloads_before_any_write() {
     let tone = || {
@@ -1127,6 +1141,7 @@ fn project_rejects_high_bit_payloads_before_any_write() {
     }
 }
 
+/// Verify invalid data in a later chunk prevents the first chunk from being written.
 #[test]
 fn chunked_write_rejects_high_bit_bytes_before_first_chunk() {
     let transport = loopback();
@@ -1139,6 +1154,7 @@ fn chunked_write_rejects_high_bit_bytes_before_first_chunk() {
     assert_eq!(probe.snapshot(0x2000_0000, 1), vec![0xFF]);
 }
 
+/// Verify a later region outside the tone slot leaves both destination and adjacent slot untouched.
 #[test]
 fn standalone_tone_load_rejects_out_of_slot_region_before_writing() {
     let transport = loopback();
@@ -1169,6 +1185,7 @@ fn standalone_tone_load_rejects_out_of_slot_region_before_writing() {
     assert_eq!(probe.snapshot(adjacent, 1), vec![0xFF]);
 }
 
+/// Verify high-bit data in a later tone region prevents earlier valid regions from being written.
 #[test]
 fn standalone_tone_load_rejects_later_invalid_region_before_writing() {
     let transport = loopback();
@@ -1212,6 +1229,7 @@ fn read_param_rejects_width_larger_than_u32() {
     assert!(error.to_string().contains("size"));
 }
 
+/// Verify a nine-byte parameter width is rejected without altering device memory.
 #[test]
 fn write_param_rejects_width_larger_than_u32_before_writing() {
     let transport = loopback();

@@ -21,6 +21,7 @@ use crate::zencore_data::SECTION_TOTAL_SIZE;
 
 pub const TONE_PRESET_FORMAT: &str = "mc_programmer.tone.v1";
 
+/// Encode bytes as uppercase hexadecimal tokens separated by spaces.
 pub(crate) fn bytes_to_hex(data: &[u8]) -> String {
     data.iter()
         .map(|b| format!("{b:02X}"))
@@ -28,6 +29,7 @@ pub(crate) fn bytes_to_hex(data: &[u8]) -> String {
         .join(" ")
 }
 
+/// Parse whitespace-separated hexadecimal bytes, reporting the position of an invalid token.
 pub(crate) fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
     hex.split_whitespace()
         .enumerate()
@@ -42,6 +44,7 @@ pub(crate) fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
+/// Require an object field and include its context in missing-field errors.
 fn required_field<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'a Value> {
     if !value.is_object() {
         return Err(Error::Json(format!("{context} must be a JSON object")));
@@ -51,6 +54,7 @@ fn required_field<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'
         .ok_or_else(|| Error::Json(format!("{context}.{field} is required")))
 }
 
+/// Read a required JSON string into an owned value, rejecting other types.
 fn required_string(value: &Value, field: &str, context: &str) -> Result<String> {
     required_field(value, field, context)?
         .as_str()
@@ -58,6 +62,7 @@ fn required_string(value: &Value, field: &str, context: &str) -> Result<String> 
         .ok_or_else(|| Error::Json(format!("{context}.{field} must be a string")))
 }
 
+/// Require a field containing a string or null; missing fields remain errors.
 fn required_optional_string(value: &Value, field: &str, context: &str) -> Result<Option<String>> {
     match required_field(value, field, context)? {
         Value::Null => Ok(None),
@@ -68,6 +73,7 @@ fn required_optional_string(value: &Value, field: &str, context: &str) -> Result
     }
 }
 
+/// Borrow a required JSON array, rejecting missing fields and other types.
 fn required_array<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'a [Value]> {
     required_field(value, field, context)?
         .as_array()
@@ -98,6 +104,7 @@ pub struct TonePreset {
 }
 
 impl TonePreset {
+    /// Store a model tag, optional display name, and tone regions without device validation.
     pub fn new(model: impl Into<String>, name: Option<String>, regions: Vec<ToneRegion>) -> Self {
         TonePreset {
             model: model.into(),
@@ -106,6 +113,8 @@ impl TonePreset {
         }
     }
 
+    /// Check model compatibility, 7-bit data, and region bounds before restoring a tone.
+    /// Offsets must fit the destination descriptor; `force` skips only model matching.
     pub(crate) fn validate_for_write(
         &self,
         expected_model: &str,
@@ -189,6 +198,8 @@ impl TonePreset {
         })
     }
 
+    /// Parse a tone preset object, checking its format tag, required fields, and hex data.
+    /// Device compatibility and region bounds are checked when the preset is restored.
     pub fn from_value(v: &Value) -> Result<Self> {
         let format = required_string(v, "format", "tone preset")?;
         if format != TONE_PRESET_FORMAT {
@@ -211,27 +222,32 @@ impl TonePreset {
         })
     }
 
+    /// Serialize the preset as indented JSON with hexadecimal region data.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(&self.to_value()).expect("serializing a serde_json::Value cannot fail")
     }
 
+    /// Parse JSON text as a tone preset, returning JSON errors for malformed input.
     pub fn from_json(raw: &str) -> Result<Self> {
         let v: Value =
             serde_json::from_str(raw).map_err(|e| Error::Json(format!("invalid JSON in tone preset: {e}")))?;
         Self::from_value(&v)
     }
 
+    /// Write the preset as indented JSON, replacing an existing file at `path`.
     pub fn save(&self, path: &str) -> Result<()> {
         fs::write(path, self.to_json())?;
         Ok(())
     }
 
+    /// Read and parse a tone preset file, propagating I/O and JSON errors.
     pub fn load(path: &str) -> Result<Self> {
         let raw = fs::read_to_string(path)?;
         Self::from_json(&raw)
     }
 }
 
+/// Parse one region with a hex offset and payload, using its index in error messages.
 fn parse_region(v: &Value, index: usize) -> Result<ToneRegion> {
     let context = format!("tone preset.regions[{index}]");
     let off = required_string(v, "offset", &context)?;
@@ -269,6 +285,7 @@ pub struct ToneRegionSpec {
 /// Offsets come from the `[ZCore]` address map in Roland's Jupiter-X/Xm MIDI
 /// Implementation v1.06; sizes come from the auto-generated `SECTION_TOTAL_SIZE`.
 pub fn tone_region_specs() -> Vec<ToneRegionSpec> {
+    /// Append a region specification with an owned label and generated section key.
     fn push(out: &mut Vec<ToneRegionSpec>, label: &str, offset: u32, key: &'static str) {
         out.push(ToneRegionSpec {
             label: label.to_string(),

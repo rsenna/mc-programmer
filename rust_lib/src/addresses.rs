@@ -138,6 +138,7 @@ pub enum StepScale {
 }
 
 impl StepScale {
+    /// Return the musical duration label, using `T` for triplet scales.
     pub fn label(self) -> &'static str {
         match self {
             StepScale::Eighth => "1/8",
@@ -183,12 +184,14 @@ pub struct AddressMap {
 }
 
 impl Default for AddressMap {
+    /// Build the standard MC address map with cached clip bases.
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl AddressMap {
+    /// Precompute all eight tracks and sixteen clip bases, skipping invalid MIDI addresses.
     pub fn new() -> Self {
         let mut rows = [[0u32; CLIPS_PER_TRACK]; NUM_TRACKS];
         for trk in 0..NUM_TRACKS {
@@ -206,14 +209,17 @@ impl AddressMap {
 
     // ------- track / clip ---------------------------------------------------
 
+    /// Return the track sound base for a track index in `0..8`; reject other indices.
     pub fn track_base(&self, trk_idx: usize) -> Result<u32> {
         Ok(TRK_BASE_ADDR[Self::t(trk_idx)?])
     }
 
+    /// Return the settings block address for a track index in `0..8`.
     pub fn track_settings_base(&self, trk_idx: usize) -> Result<u32> {
         Ok(TRK_SETTINGS_BASE_ADDR[Self::t(trk_idx)?])
     }
 
+    /// Return the clip base after checking track `0..8` and clip `0..16` indices.
     pub fn clip_base(&self, trk_idx: usize, clip_idx: usize) -> Result<u32> {
         let t = Self::t(trk_idx)?;
         let c = Self::c(clip_idx)?;
@@ -222,16 +228,21 @@ impl AddressMap {
 
     // ------- sequencer step addresses --------------------------------------
 
+    /// Locate clip timing parameters using zero-based track and clip indices.
     pub fn clip_params_address(&self, trk_idx: usize, clip_idx: usize) -> Result<u32> {
         add_roland_address(self.clip_base(trk_idx, clip_idx)?, SEQ_PARAMS_OFFS)
     }
 
+    /// Locate a note record using zero-based track, clip, and step indices.
+    /// Reject indices outside eight tracks, sixteen clips, or 128 steps.
     pub fn note_step_address(&self, trk_idx: usize, clip_idx: usize, step_idx: usize) -> Result<u32> {
         let s = Self::s(step_idx)? as u32;
         let notes = add_roland_address(self.clip_base(trk_idx, clip_idx)?, SEQ_NOTE_OFFS)?;
         add_roland_offset(notes, s * STEP_SIZE)
     }
 
+    /// Locate a motion lane using zero-based track, clip, step, and lane indices.
+    /// Return an error if any index is out of range; each step has eight lanes.
     pub fn motion_step_address(
         &self,
         trk_idx: usize,
@@ -270,6 +281,7 @@ impl AddressMap {
 
     // ------- bounds helpers -------------------------------------------------
 
+    /// Validate and return a zero-based track index in `0..8`.
     fn t(i: usize) -> Result<usize> {
         if i < NUM_TRACKS {
             Ok(i)
@@ -278,6 +290,7 @@ impl AddressMap {
         }
     }
 
+    /// Validate and return a zero-based clip index in `0..16`.
     fn c(i: usize) -> Result<usize> {
         if i < CLIPS_PER_TRACK {
             Ok(i)
@@ -286,6 +299,7 @@ impl AddressMap {
         }
     }
 
+    /// Validate and return a zero-based step index in `0..128`.
     fn s(i: usize) -> Result<usize> {
         if i < STEPS_PER_CLIP {
             Ok(i)
@@ -299,6 +313,7 @@ impl AddressMap {
 mod tests {
     use super::*;
 
+    /// Verify every cached clip base fits in four 7-bit address bytes.
     #[test]
     fn no_clip_address_has_high_msb() {
         let map = AddressMap::new();
@@ -310,6 +325,7 @@ mod tests {
         }
     }
 
+    /// Verify the first clip tone and track tone occupy the expected descriptor slots.
     #[test]
     fn zencore_tone_address() {
         let map = AddressMap::new();
@@ -320,6 +336,7 @@ mod tests {
         );
     }
 
+    /// Verify step addresses advance by linear record sizes across packed address boundaries.
     #[test]
     fn note_step_address_arithmetic() {
         let map = AddressMap::new();
@@ -334,6 +351,7 @@ mod tests {
         );
     }
 
+    /// Verify out-of-range track, clip, and step indices return errors.
     #[test]
     fn bounds_checked() {
         let map = AddressMap::new();

@@ -27,11 +27,14 @@ struct ReplyState {
 }
 
 impl ReplyState {
+    /// Discard queued replies and any incomplete SysEx frame before a transaction.
     fn clear(&mut self) {
         self.frames.clear();
         self.pending.clear();
     }
 
+    /// Collect incoming bytes into SysEx frames and report whether a frame completed.
+    /// Ignore bytes outside frames and restart assembly on a new `0xF0`.
     fn ingest(&mut self, message: &[u8]) -> bool {
         let mut completed = false;
         for &byte in message {
@@ -135,6 +138,8 @@ impl MidirTransport {
 }
 
 impl Transport for MidirTransport {
+    /// Serialize a MIDI request and return the first complete SysEx reply.
+    /// Clear old replies before sending; return an empty vector when the timeout in seconds expires.
     fn transfer(&self, message: &[u8], timeout: f64) -> Result<Vec<u8>> {
         let _transaction = self.transaction.lock();
         let (state, ready) = &*self.replies;
@@ -159,6 +164,7 @@ impl Transport for MidirTransport {
         }
     }
 
+    /// Send a raw MIDI message through the output connection without waiting for a reply.
     fn send_raw(&self, message: &[u8]) -> Result<()> {
         self.output
             .lock()
@@ -167,6 +173,7 @@ impl Transport for MidirTransport {
     }
 }
 
+/// Collect backend input port names, propagating name lookup failures.
 fn input_port_names(input: &MidiInput) -> Result<Vec<String>> {
     input
         .ports()
@@ -179,6 +186,7 @@ fn input_port_names(input: &MidiInput) -> Result<Vec<String>> {
         .collect()
 }
 
+/// Collect backend output port names, propagating name lookup failures.
 fn output_port_names(output: &MidiOutput) -> Result<Vec<String>> {
     output
         .ports()
@@ -191,6 +199,8 @@ fn output_port_names(output: &MidiOutput) -> Result<Vec<String>> {
         .collect()
 }
 
+/// Find the first input port containing `target`, ignoring case.
+/// Report available input names when no port matches.
 fn find_input_port(input: &MidiInput, target: &str) -> Result<MidiInputPort> {
     let target_lower = target.to_lowercase();
     for port in input.ports() {
@@ -207,6 +217,8 @@ fn find_input_port(input: &MidiInput, target: &str) -> Result<MidiInputPort> {
     )))
 }
 
+/// Find the first output port containing `target`, ignoring case.
+/// Report available output names when no port matches.
 fn find_output_port(output: &MidiOutput, target: &str) -> Result<MidiOutputPort> {
     let target_lower = target.to_lowercase();
     for port in output.ports() {
@@ -227,6 +239,7 @@ fn find_output_port(output: &MidiOutput, target: &str) -> Result<MidiOutputPort>
 mod tests {
     use super::ReplyState;
 
+    /// Verify split callbacks form one reply while bytes outside the frame are ignored.
     #[test]
     fn reassembles_split_sysex_frames_and_ignores_stray_bytes() {
         let mut state = ReplyState::default();
@@ -239,6 +252,7 @@ mod tests {
         assert!(state.pending.is_empty());
     }
 
+    /// Verify a fresh SysEx start replaces an unfinished reply.
     #[test]
     fn a_new_sysex_start_discards_an_incomplete_frame() {
         let mut state = ReplyState::default();

@@ -8,6 +8,7 @@
 
 use mc_programmer::{LoopbackTransport, MCClient, ModelId, NoteComponent, NoteStep};
 
+/// Write a kick pattern to loopback memory and print the steps containing notes.
 fn main() {
     let client = MCClient::new(
         LoopbackTransport::new(ModelId::Mc707, 0xFF),

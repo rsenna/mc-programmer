@@ -27,8 +27,11 @@ use crate::error::Result;
 /// `send_raw` has a default no-op implementation so existing transports keep
 /// building without it.
 pub trait Transport: Send + Sync {
+    /// Send a complete SysEx message and collect a reply within `timeout` seconds.
+    /// Return an empty vector when no reply is received.
     fn transfer(&self, message: &[u8], timeout: f64) -> Result<Vec<u8>>;
 
+    /// Send a non-SysEx MIDI message; the default implementation does nothing.
     fn send_raw(&self, _message: &[u8]) -> Result<()> {
         Ok(())
     }
@@ -51,6 +54,7 @@ pub struct NullTransport {
 }
 
 impl NullTransport {
+    /// Create a recorder with no queued replies or recorded messages.
     pub fn new() -> Self {
         Self::default()
     }
@@ -72,6 +76,7 @@ impl NullTransport {
 }
 
 impl Transport for NullTransport {
+    /// Record the request and consume the next scripted reply, or return an empty vector.
     fn transfer(&self, message: &[u8], _timeout: f64) -> Result<Vec<u8>> {
         let mut state = self.state.lock();
         state.sent.push(message.to_vec());
@@ -82,6 +87,7 @@ impl Transport for NullTransport {
         })
     }
 
+    /// Record a raw MIDI message without consuming a scripted reply.
     fn send_raw(&self, message: &[u8]) -> Result<()> {
         self.state.lock().sent.push(message.to_vec());
         Ok(())
