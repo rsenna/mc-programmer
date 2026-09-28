@@ -13,8 +13,8 @@ use std::fs;
 use serde_json::{json, Value};
 
 use crate::addresses::{
-    add_roland_address, add_roland_offset, roland_address_to_linear, SEQ_MOTION_OFFS, SEQ_NOTE_OFFS, SEQ_PARAMS_OFFS,
-    SEQ_PITCHBEND_OFFS, STEP_SIZE, TRK_SETTINGS_BASE_ADDR, ZENCORE_TONE_ALIGNMENT,
+    add_roland_address, SEQ_MOTION_OFFS, SEQ_NOTE_OFFS, SEQ_PARAMS_OFFS, SEQ_PITCHBEND_OFFS, STEP_SIZE,
+    TRK_SETTINGS_BASE_ADDR,
 };
 use crate::client::MCClient;
 use crate::error::{Error, Result};
@@ -378,56 +378,10 @@ impl Project {
         force: bool,
     ) -> Result<()> {
         let location = match clip_number {
-            Some(clip) => format!("track {track_number} clip {clip}"),
-            None => format!("track {track_number}"),
+            Some(clip) => format!("project track {track_number} clip {clip}"),
+            None => format!("project track {track_number}"),
         };
-        if !force && !tone.model.is_empty() && tone.model != expected {
-            return Err(Error::Value(format!(
-                "project {location} tone model {:?} doesn't match this client's model {expected:?}",
-                tone.model
-            )));
-        }
-        for region in &tone.regions {
-            validate_7bit_data(
-                &region.data,
-                &format!("project {location} tone region {:?}", region.label),
-            )?;
-            let region_offset = roland_address_to_linear(region.offset).map_err(|error| {
-                Error::Value(format!(
-                    "project {location} tone region {:?}: {error}",
-                    region.label
-                ))
-            })?;
-            let region_length = u32::try_from(region.data.len())
-                .map_err(|_| Error::Value(format!("project {location} tone region is too large")))?;
-            let region_end = region_offset
-                .checked_add(region_length)
-                .ok_or_else(|| Error::Value(format!("project {location} tone region is too large")))?;
-            let descriptor_size = roland_address_to_linear(ZENCORE_TONE_ALIGNMENT)?;
-            if region_end > descriptor_size {
-                return Err(Error::Value(format!(
-                    "project {location} tone region {:?} exceeds its descriptor slot",
-                    region.label
-                )));
-            }
-            let address = add_roland_address(base_address, region.offset).map_err(|error| {
-                Error::Value(format!(
-                    "project {location} tone region {:?}: {error}",
-                    region.label
-                ))
-            })?;
-            if !region.data.is_empty() {
-                let last_offset = u32::try_from(region.data.len() - 1)
-                    .map_err(|_| Error::Value(format!("project {location} tone region is too large")))?;
-                add_roland_offset(address, last_offset).map_err(|error| {
-                    Error::Value(format!(
-                        "project {location} tone region {:?}: {error}",
-                        region.label
-                    ))
-                })?;
-            }
-        }
-        Ok(())
+        tone.validate_for_write(expected, force, base_address, &location)
     }
 
     pub fn to_json(&self) -> String {

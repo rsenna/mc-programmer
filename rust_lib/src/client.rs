@@ -593,6 +593,7 @@ impl<T: Transport> MCClient<T> {
         let ti = self.track_to_idx(track)?;
         let ci = clip.map(Self::clip_to_idx).transpose()?;
         let base = self.addresses.zencore_tone_address(ti, ci)?;
+        preset.validate_for_write(&expected, force, base, "preset")?;
 
         for region in &preset.regions {
             self.write_chunked(add_roland_address(base, region.offset)?, &region.data)?;

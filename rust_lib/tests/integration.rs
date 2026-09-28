@@ -1138,3 +1138,60 @@ fn chunked_write_rejects_high_bit_bytes_before_first_chunk() {
     assert!(error.to_string().contains("128"));
     assert_eq!(probe.snapshot(0x2000_0000, 1), vec![0xFF]);
 }
+
+#[test]
+fn standalone_tone_load_rejects_out_of_slot_region_before_writing() {
+    let transport = loopback();
+    let probe = transport.clone();
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    let base = c.addresses.zencore_tone_address(0, None).unwrap();
+    let adjacent =
+        mc_programmer::addresses::add_roland_address(base, mc_programmer::addresses::ZENCORE_TONE_ALIGNMENT).unwrap();
+    let preset = TonePreset::new(
+        "MC-707",
+        None,
+        vec![
+            ToneRegion {
+                offset: 0,
+                label: "valid".into(),
+                data: vec![0x33],
+            },
+            ToneRegion {
+                offset: mc_programmer::addresses::ZENCORE_TONE_ALIGNMENT,
+                label: "outside".into(),
+                data: vec![0x44],
+            },
+        ],
+    );
+    let error = c.load_tone(1, None, &preset).unwrap_err();
+    assert!(error.to_string().contains("descriptor slot"));
+    assert_eq!(probe.snapshot(base, 1), vec![0xFF]);
+    assert_eq!(probe.snapshot(adjacent, 1), vec![0xFF]);
+}
+
+#[test]
+fn standalone_tone_load_rejects_later_invalid_region_before_writing() {
+    let transport = loopback();
+    let probe = transport.clone();
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    let base = c.addresses.zencore_tone_address(0, None).unwrap();
+    let preset = TonePreset::new(
+        "MC-707",
+        None,
+        vec![
+            ToneRegion {
+                offset: 0,
+                label: "valid".into(),
+                data: vec![0x33],
+            },
+            ToneRegion {
+                offset: 0x0100,
+                label: "invalid".into(),
+                data: vec![0x80],
+            },
+        ],
+    );
+    let error = c.load_tone(1, None, &preset).unwrap_err();
+    assert!(error.to_string().contains("0x80"));
+    assert_eq!(probe.snapshot(base, 1), vec![0xFF]);
+}

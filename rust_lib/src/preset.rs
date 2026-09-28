@@ -14,7 +14,9 @@ use std::fs;
 
 use serde_json::{json, Value};
 
+use crate::addresses::{add_roland_address, add_roland_offset, roland_address_to_linear, ZENCORE_TONE_ALIGNMENT};
 use crate::error::{Error, Result};
+use crate::protocol::validate_7bit_data;
 use crate::zencore_data::SECTION_TOTAL_SIZE;
 
 pub const TONE_PRESET_FORMAT: &str = "mc_programmer.tone.v1";
@@ -102,6 +104,63 @@ impl TonePreset {
             name,
             regions,
         }
+    }
+
+    pub(crate) fn validate_for_write(
+        &self,
+        expected_model: &str,
+        force: bool,
+        base_address: u32,
+        location: &str,
+    ) -> Result<()> {
+        if !force && !self.model.is_empty() && self.model != expected_model {
+            return Err(Error::Value(format!(
+                "{location} tone model {:?} doesn't match this client's model {expected_model:?}",
+                self.model
+            )));
+        }
+
+        let descriptor_size = roland_address_to_linear(ZENCORE_TONE_ALIGNMENT)?;
+        for region in &self.regions {
+            validate_7bit_data(
+                &region.data,
+                &format!("{location} tone region {:?}", region.label),
+            )?;
+            let region_offset = roland_address_to_linear(region.offset).map_err(|error| {
+                Error::Value(format!(
+                    "{location} tone region {:?}: {error}",
+                    region.label
+                ))
+            })?;
+            let region_length = u32::try_from(region.data.len())
+                .map_err(|_| Error::Value(format!("{location} tone region is too large")))?;
+            let region_end = region_offset
+                .checked_add(region_length)
+                .ok_or_else(|| Error::Value(format!("{location} tone region is too large")))?;
+            if region_end > descriptor_size {
+                return Err(Error::Value(format!(
+                    "{location} tone region {:?} exceeds its descriptor slot",
+                    region.label
+                )));
+            }
+            let address = add_roland_address(base_address, region.offset).map_err(|error| {
+                Error::Value(format!(
+                    "{location} tone region {:?}: {error}",
+                    region.label
+                ))
+            })?;
+            if !region.data.is_empty() {
+                let last_offset = u32::try_from(region.data.len() - 1)
+                    .map_err(|_| Error::Value(format!("{location} tone region is too large")))?;
+                add_roland_offset(address, last_offset).map_err(|error| {
+                    Error::Value(format!(
+                        "{location} tone region {:?}: {error}",
+                        region.label
+                    ))
+                })?;
+            }
+        }
+        Ok(())
     }
 
     /// The full JSON object for this preset (used directly for file output and

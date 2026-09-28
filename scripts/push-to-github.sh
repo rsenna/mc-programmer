@@ -158,7 +158,7 @@ same data model and parameter table:
   parameter discovery
 * MC-101 verified end-to-end (4 tracks instead of 8, same engine and
   parameter table)
-* 70 Python tests + 42 Swift tests + 84 Rust tests, all passing offline
+* 70 Python tests + 42 Swift tests + 86 Rust tests, all passing offline
   against LoopbackTransport
 * Comprehensive documentation: quick starts, runnable examples, USECASES,
   ROADMAP, and CLAUDE.md for the agent
