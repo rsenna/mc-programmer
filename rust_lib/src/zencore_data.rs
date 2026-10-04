@@ -42,7 +42,7 @@ pub static PARTIAL_EQ: &[ZCParam] = &[
     ),
     ZCParam::new(
         "eq_low_frequency",
-        0x000C,
+        0x000c,
         4,
         20,
         16000,
@@ -78,7 +78,7 @@ pub static PARTIAL_EQ: &[ZCParam] = &[
     ),
     ZCParam::new(
         "eq_switch",
-        0x001A,
+        0x001a,
         1,
         0,
         1,
@@ -137,7 +137,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "rate_detune_1",
-        0x000A,
+        0x000a,
         1,
         0,
         127,
@@ -146,7 +146,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "delay_time_1",
-        0x000B,
+        0x000b,
         4,
         0,
         1023,
@@ -155,7 +155,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "delay_time_keyfolow_1",
-        0x000F,
+        0x000f,
         2,
         28,
         228,
@@ -209,7 +209,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tva_depth_1",
-        0x001B,
+        0x001b,
         2,
         28,
         228,
@@ -218,7 +218,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "pan_depth_1",
-        0x001D,
+        0x001d,
         1,
         1,
         127,
@@ -227,32 +227,32 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "phase_position_1",
-        0x001E,
+        0x001e,
         1,
         0,
         3,
         "Phase Position 1",
         "Phase Position (0 - 3)",
     ),
-    ZCParam::new("step_1", 0x001F, 2, 56, 200, "Step 1", "Step (56 - 200)"),
+    ZCParam::new("step_1", 0x001f, 2, 56, 200, "Step 1", "Step (56 - 200)"),
     ZCParam::new("step_2", 0x0021, 2, 56, 200, "Step 2", "Step (56 - 200)"),
     ZCParam::new("step_3", 0x0023, 2, 56, 200, "Step 3", "Step (56 - 200)"),
     ZCParam::new("step_4", 0x0025, 2, 56, 200, "Step 4", "Step (56 - 200)"),
     ZCParam::new("step_5", 0x0027, 2, 56, 200, "Step 5", "Step (56 - 200)"),
     ZCParam::new("step_6", 0x0029, 2, 56, 200, "Step 6", "Step (56 - 200)"),
-    ZCParam::new("step_7", 0x002B, 2, 56, 200, "Step 7", "Step (56 - 200)"),
-    ZCParam::new("step_8", 0x002D, 2, 56, 200, "Step 8", "Step (56 - 200)"),
-    ZCParam::new("step_9", 0x002F, 2, 56, 200, "Step 9", "Step (56 - 200)"),
+    ZCParam::new("step_7", 0x002b, 2, 56, 200, "Step 7", "Step (56 - 200)"),
+    ZCParam::new("step_8", 0x002d, 2, 56, 200, "Step 8", "Step (56 - 200)"),
+    ZCParam::new("step_9", 0x002f, 2, 56, 200, "Step 9", "Step (56 - 200)"),
     ZCParam::new("step_10", 0x0031, 2, 56, 200, "Step 10", "Step (56 - 200)"),
     ZCParam::new("step_11", 0x0033, 2, 56, 200, "Step 11", "Step (56 - 200)"),
     ZCParam::new("step_12", 0x0035, 2, 56, 200, "Step 12", "Step (56 - 200)"),
     ZCParam::new("step_13", 0x0037, 2, 56, 200, "Step 13", "Step (56 - 200)"),
     ZCParam::new("step_14", 0x0039, 2, 56, 200, "Step 14", "Step (56 - 200)"),
-    ZCParam::new("step_15", 0x003B, 2, 56, 200, "Step 15", "Step (56 - 200)"),
-    ZCParam::new("step_16", 0x003D, 2, 56, 200, "Step 16", "Step (56 - 200)"),
+    ZCParam::new("step_15", 0x003b, 2, 56, 200, "Step 15", "Step (56 - 200)"),
+    ZCParam::new("step_16", 0x003d, 2, 56, 200, "Step 16", "Step (56 - 200)"),
     ZCParam::new(
         "step_curve_1",
-        0x003F,
+        0x003f,
         1,
         0,
         36,
@@ -351,7 +351,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_12",
-        0x004A,
+        0x004a,
         1,
         0,
         36,
@@ -360,7 +360,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_13",
-        0x004B,
+        0x004b,
         1,
         0,
         36,
@@ -369,7 +369,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_14",
-        0x004C,
+        0x004c,
         1,
         0,
         36,
@@ -378,7 +378,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_15",
-        0x004D,
+        0x004d,
         1,
         0,
         36,
@@ -387,7 +387,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_16",
-        0x004E,
+        0x004e,
         1,
         0,
         36,
@@ -396,7 +396,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "waveform_2",
-        0x004F,
+        0x004f,
         1,
         0,
         10,
@@ -451,7 +451,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "delay_time_2",
-        0x005A,
+        0x005a,
         4,
         0,
         1023,
@@ -460,7 +460,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "delay_time_keyfolow_2",
-        0x005E,
+        0x005e,
         2,
         28,
         228,
@@ -514,7 +514,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tva_depth_2",
-        0x006A,
+        0x006a,
         2,
         28,
         228,
@@ -523,7 +523,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "pan_depth_2",
-        0x006C,
+        0x006c,
         1,
         1,
         127,
@@ -532,32 +532,32 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "phase_position_2",
-        0x006D,
+        0x006d,
         1,
         0,
         3,
         "Phase Position 2",
         "Phase Position (0 - 3)",
     ),
-    ZCParam::new("step_17", 0x006E, 2, 56, 200, "Step 17", "Step (56 - 200)"),
+    ZCParam::new("step_17", 0x006e, 2, 56, 200, "Step 17", "Step (56 - 200)"),
     ZCParam::new("step_18", 0x0070, 2, 56, 200, "Step 18", "Step (56 - 200)"),
     ZCParam::new("step_19", 0x0072, 2, 56, 200, "Step 19", "Step (56 - 200)"),
     ZCParam::new("step_20", 0x0074, 2, 56, 200, "Step 20", "Step (56 - 200)"),
     ZCParam::new("step_21", 0x0076, 2, 56, 200, "Step 21", "Step (56 - 200)"),
     ZCParam::new("step_22", 0x0078, 2, 56, 200, "Step 22", "Step (56 - 200)"),
-    ZCParam::new("step_23", 0x007A, 2, 56, 200, "Step 23", "Step (56 - 200)"),
-    ZCParam::new("step_24", 0x007C, 2, 56, 200, "Step 24", "Step (56 - 200)"),
-    ZCParam::new("step_25", 0x007E, 2, 56, 200, "Step 25", "Step (56 - 200)"),
+    ZCParam::new("step_23", 0x007a, 2, 56, 200, "Step 23", "Step (56 - 200)"),
+    ZCParam::new("step_24", 0x007c, 2, 56, 200, "Step 24", "Step (56 - 200)"),
+    ZCParam::new("step_25", 0x007e, 2, 56, 200, "Step 25", "Step (56 - 200)"),
     ZCParam::new("step_26", 0x0100, 2, 56, 200, "Step 26", "Step (56 - 200)"),
     ZCParam::new("step_27", 0x0102, 2, 56, 200, "Step 27", "Step (56 - 200)"),
     ZCParam::new("step_28", 0x0104, 2, 56, 200, "Step 28", "Step (56 - 200)"),
     ZCParam::new("step_29", 0x0106, 2, 56, 200, "Step 29", "Step (56 - 200)"),
     ZCParam::new("step_30", 0x0108, 2, 56, 200, "Step 30", "Step (56 - 200)"),
-    ZCParam::new("step_31", 0x010A, 2, 56, 200, "Step 31", "Step (56 - 200)"),
-    ZCParam::new("step_32", 0x010C, 2, 56, 200, "Step 32", "Step (56 - 200)"),
+    ZCParam::new("step_31", 0x010a, 2, 56, 200, "Step 31", "Step (56 - 200)"),
+    ZCParam::new("step_32", 0x010c, 2, 56, 200, "Step 32", "Step (56 - 200)"),
     ZCParam::new(
         "step_curve_17",
-        0x010E,
+        0x010e,
         1,
         0,
         36,
@@ -566,7 +566,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_18",
-        0x010F,
+        0x010f,
         1,
         0,
         36,
@@ -665,7 +665,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_29",
-        0x011A,
+        0x011a,
         1,
         0,
         36,
@@ -674,7 +674,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_30",
-        0x011B,
+        0x011b,
         1,
         0,
         36,
@@ -683,7 +683,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_31",
-        0x011C,
+        0x011c,
         1,
         0,
         36,
@@ -692,7 +692,7 @@ pub static PARTIAL_LFO: &[ZCParam] = &[
     ),
     ZCParam::new(
         "step_curve_32",
-        0x011D,
+        0x011d,
         1,
         0,
         36,
@@ -750,7 +750,7 @@ pub static PARTIAL_PITCH_ENV: &[ZCParam] = &[
     ),
     ZCParam::new(
         "pitch_env_time2",
-        0x000C,
+        0x000c,
         4,
         0,
         1023,
@@ -786,7 +786,7 @@ pub static PARTIAL_PITCH_ENV: &[ZCParam] = &[
     ),
     ZCParam::new(
         "pitch_env_level1",
-        0x001C,
+        0x001c,
         4,
         513,
         1535,
@@ -822,7 +822,7 @@ pub static PARTIAL_PITCH_ENV: &[ZCParam] = &[
     ),
     ZCParam::new(
         "pitch_env_velocity_curve",
-        0x002C,
+        0x002c,
         1,
         0,
         7,
@@ -889,7 +889,7 @@ pub static PARTIAL_FILTER_ENV: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tvf_env_time2",
-        0x000C,
+        0x000c,
         4,
         0,
         1023,
@@ -925,7 +925,7 @@ pub static PARTIAL_FILTER_ENV: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tvf_env_level1",
-        0x001C,
+        0x001c,
         4,
         0,
         1023,
@@ -1001,7 +1001,7 @@ pub static PARTIAL_AMP_ENV: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tva_env_time3",
-        0x000C,
+        0x000c,
         4,
         0,
         1023,
@@ -1037,7 +1037,7 @@ pub static PARTIAL_AMP_ENV: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tva_env_level3",
-        0x001C,
+        0x001c,
         4,
         0,
         1023,
@@ -1081,7 +1081,7 @@ pub static TONE_COMMON: &[ZCParam] = &[
     ),
     ZCParam::new(
         "octave_shift",
-        0x001A,
+        0x001a,
         1,
         61,
         67,
@@ -1090,7 +1090,7 @@ pub static TONE_COMMON: &[ZCParam] = &[
     ),
     ZCParam::new(
         "stretch_tune_depth",
-        0x001B,
+        0x001b,
         1,
         0,
         3,
@@ -1099,7 +1099,7 @@ pub static TONE_COMMON: &[ZCParam] = &[
     ),
     ZCParam::new(
         "analog_feel",
-        0x001C,
+        0x001c,
         1,
         0,
         127,
@@ -1108,7 +1108,7 @@ pub static TONE_COMMON: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mono_poly",
-        0x001D,
+        0x001d,
         1,
         0,
         1,
@@ -1117,7 +1117,7 @@ pub static TONE_COMMON: &[ZCParam] = &[
     ),
     ZCParam::new(
         "legato_switch",
-        0x001E,
+        0x001e,
         1,
         0,
         1,
@@ -1126,7 +1126,7 @@ pub static TONE_COMMON: &[ZCParam] = &[
     ),
     ZCParam::new(
         "legato_retrigger_interval",
-        0x001F,
+        0x001f,
         1,
         0,
         13,
@@ -1198,7 +1198,7 @@ pub static TONE_COMMON: &[ZCParam] = &[
     ),
     ZCParam::new(
         "bend_mode",
-        0x002A,
+        0x002a,
         1,
         0,
         1,
@@ -1207,7 +1207,7 @@ pub static TONE_COMMON: &[ZCParam] = &[
     ),
     ZCParam::new(
         "soft_level_sens",
-        0x002B,
+        0x002b,
         1,
         0,
         100,
@@ -1328,7 +1328,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "velofade_upper_1",
-        0x000A,
+        0x000a,
         1,
         0,
         127,
@@ -1337,7 +1337,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "partial_switch_2",
-        0x000B,
+        0x000b,
         1,
         0,
         1,
@@ -1346,7 +1346,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "keyrange_lower_2",
-        0x000C,
+        0x000c,
         1,
         0,
         127,
@@ -1355,7 +1355,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "keyrange_upper_2",
-        0x000D,
+        0x000d,
         1,
         0,
         127,
@@ -1364,7 +1364,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "keyfade_lower_2",
-        0x000E,
+        0x000e,
         1,
         0,
         127,
@@ -1373,7 +1373,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "keyfade_upper_2",
-        0x000F,
+        0x000f,
         1,
         0,
         127,
@@ -1472,7 +1472,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "velorange_upper_3",
-        0x001A,
+        0x001a,
         1,
         1,
         127,
@@ -1481,7 +1481,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "velofade_lower_3",
-        0x001B,
+        0x001b,
         1,
         0,
         127,
@@ -1490,7 +1490,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "velofade_upper_3",
-        0x001C,
+        0x001c,
         1,
         0,
         127,
@@ -1499,7 +1499,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "partial_switch_4",
-        0x001D,
+        0x001d,
         1,
         0,
         1,
@@ -1508,7 +1508,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "keyrange_lower_4",
-        0x001E,
+        0x001e,
         1,
         0,
         127,
@@ -1517,7 +1517,7 @@ pub static TONE_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "keyrange_upper_4",
-        0x001F,
+        0x001f,
         1,
         0,
         127,
@@ -1622,7 +1622,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "random_pan_depth",
-        0x000A,
+        0x000a,
         1,
         0,
         63,
@@ -1631,7 +1631,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "alternate_pan_depth",
-        0x000B,
+        0x000b,
         1,
         0,
         127,
@@ -1640,7 +1640,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "envelope_mode",
-        0x000C,
+        0x000c,
         1,
         0,
         1,
@@ -1649,7 +1649,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "delay_mode",
-        0x000D,
+        0x000d,
         1,
         0,
         3,
@@ -1658,7 +1658,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "delaytime_sync",
-        0x000E,
+        0x000e,
         1,
         0,
         1,
@@ -1667,7 +1667,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "delaytime_note",
-        0x000F,
+        0x000f,
         1,
         0,
         21,
@@ -1739,7 +1739,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "output_assign",
-        0x001A,
+        0x001a,
         1,
         0,
         1,
@@ -1748,7 +1748,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "wave_group_type",
-        0x001B,
+        0x001b,
         1,
         0,
         3,
@@ -1757,7 +1757,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "wave_group_id",
-        0x001C,
+        0x001c,
         4,
         0,
         16383,
@@ -1794,7 +1794,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "fxm_color",
-        0x002A,
+        0x002a,
         1,
         1,
         4,
@@ -1803,7 +1803,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "fxm_depth",
-        0x002B,
+        0x002b,
         1,
         0,
         16,
@@ -1812,7 +1812,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "pitch_keyfollow",
-        0x002C,
+        0x002c,
         4,
         824,
         1224,
@@ -1857,7 +1857,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tvf_cutoff_velocity_curve",
-        0x003A,
+        0x003a,
         1,
         0,
         7,
@@ -1866,7 +1866,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tvf_cutoff_velocity_sens",
-        0x003B,
+        0x003b,
         2,
         28,
         228,
@@ -1875,7 +1875,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tvf_resonance",
-        0x003D,
+        0x003d,
         4,
         0,
         1023,
@@ -1938,7 +1938,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "pitch_env_time_keyfollow",
-        0x004A,
+        0x004a,
         2,
         28,
         228,
@@ -1947,7 +1947,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tvf_env_time_keyfollow",
-        0x004C,
+        0x004c,
         2,
         28,
         228,
@@ -1956,7 +1956,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "tva_env_time_keyfollow",
-        0x004E,
+        0x004e,
         2,
         28,
         228,
@@ -2028,7 +2028,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "sens_2_1",
-        0x005A,
+        0x005a,
         1,
         1,
         127,
@@ -2037,7 +2037,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "destination_3_1",
-        0x005B,
+        0x005b,
         1,
         0,
         48,
@@ -2046,7 +2046,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "sens_3_1",
-        0x005C,
+        0x005c,
         1,
         1,
         127,
@@ -2055,7 +2055,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "destination_4_1",
-        0x005D,
+        0x005d,
         1,
         0,
         48,
@@ -2064,7 +2064,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "sens_4_1",
-        0x005E,
+        0x005e,
         1,
         1,
         127,
@@ -2073,7 +2073,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "source_2",
-        0x005F,
+        0x005f,
         1,
         0,
         108,
@@ -2172,7 +2172,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "sens_1_3",
-        0x006A,
+        0x006a,
         1,
         1,
         127,
@@ -2181,7 +2181,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "destination_2_3",
-        0x006B,
+        0x006b,
         1,
         0,
         48,
@@ -2190,7 +2190,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "sens_2_3",
-        0x006C,
+        0x006c,
         1,
         1,
         127,
@@ -2199,7 +2199,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "destination_3_3",
-        0x006D,
+        0x006d,
         1,
         0,
         48,
@@ -2208,7 +2208,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "sens_3_3",
-        0x006E,
+        0x006e,
         1,
         1,
         127,
@@ -2217,7 +2217,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "destination_4_3",
-        0x006F,
+        0x006f,
         1,
         0,
         48,
@@ -2316,7 +2316,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "damper_free_note",
-        0x007A,
+        0x007a,
         1,
         0,
         127,
@@ -2325,7 +2325,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "stereo_width",
-        0x007B,
+        0x007b,
         1,
         0,
         100,
@@ -2334,7 +2334,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "stereo_detune",
-        0x007C,
+        0x007c,
         1,
         14,
         114,
@@ -2343,7 +2343,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "damper_free_decay_offset",
-        0x007D,
+        0x007d,
         2,
         28,
         228,
@@ -2352,7 +2352,7 @@ pub static TONE_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "wave_tempo_sync",
-        0x007F,
+        0x007f,
         1,
         0,
         1,
@@ -2522,7 +2522,7 @@ pub static TONE_SYNTH_PMT: &[ZCParam] = &[
     ),
     ZCParam::new(
         "crossmod3_4_depth",
-        0x000C,
+        0x000c,
         4,
         0,
         10800,
@@ -2653,7 +2653,7 @@ pub static TONE_SYNTH_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "hpf_cutoff",
-        0x000A,
+        0x000a,
         4,
         0,
         1023,
@@ -2662,7 +2662,7 @@ pub static TONE_SYNTH_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "filter_type",
-        0x000E,
+        0x000e,
         1,
         0,
         1,
@@ -2671,7 +2671,7 @@ pub static TONE_SYNTH_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "filter_slope",
-        0x000F,
+        0x000f,
         1,
         0,
         2,
@@ -2745,7 +2745,7 @@ pub static TONE_SYNTH_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "aenv_lfo_trigger_switch",
-        0x001A,
+        0x001a,
         1,
         0,
         1,
@@ -2754,7 +2754,7 @@ pub static TONE_SYNTH_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "pitch_down_depth",
-        0x001B,
+        0x001b,
         1,
         0,
         120,
@@ -2763,7 +2763,7 @@ pub static TONE_SYNTH_PARTIAL: &[ZCParam] = &[
     ),
     ZCParam::new(
         "va_init_phase",
-        0x001D,
+        0x001d,
         1,
         0,
         72,
@@ -2866,7 +2866,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_ctrlsrc_4",
-        0x000A,
+        0x000a,
         1,
         0,
         100,
@@ -2875,7 +2875,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_ctrlsens_4",
-        0x000B,
+        0x000b,
         1,
         1,
         127,
@@ -2884,7 +2884,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_ctrlasgn_1",
-        0x000C,
+        0x000c,
         1,
         0,
         11,
@@ -2893,7 +2893,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_ctrlasgn_2",
-        0x000D,
+        0x000d,
         1,
         0,
         11,
@@ -2902,7 +2902,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_ctrlasgn_3",
-        0x000E,
+        0x000e,
         1,
         0,
         11,
@@ -2911,7 +2911,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_ctrlasgn_4",
-        0x000F,
+        0x000f,
         1,
         0,
         11,
@@ -2947,7 +2947,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_parameter_4",
-        0x001C,
+        0x001c,
         4,
         12768,
         52768,
@@ -2983,7 +2983,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_parameter_8",
-        0x002C,
+        0x002c,
         4,
         12768,
         52768,
@@ -3019,7 +3019,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_parameter_12",
-        0x003C,
+        0x003c,
         4,
         12768,
         52768,
@@ -3055,7 +3055,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_parameter_16",
-        0x004C,
+        0x004c,
         4,
         12768,
         52768,
@@ -3091,7 +3091,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_parameter_20",
-        0x005C,
+        0x005c,
         4,
         12768,
         52768,
@@ -3127,7 +3127,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_parameter_24",
-        0x006C,
+        0x006c,
         4,
         12768,
         52768,
@@ -3163,7 +3163,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_parameter_28",
-        0x007C,
+        0x007c,
         4,
         12768,
         52768,
@@ -3199,7 +3199,7 @@ pub static TONE_MFX: &[ZCParam] = &[
     ),
     ZCParam::new(
         "mfx_parameter_32",
-        0x010C,
+        0x010c,
         4,
         12768,
         52768,
@@ -3210,16 +3210,16 @@ pub static TONE_MFX: &[ZCParam] = &[
 
 /// Section name → total size in bytes (from the auto-generated table).
 pub static SECTION_TOTAL_SIZE: &[(&str, u32)] = &[
-    ("PARTIAL_EQ", 0x1B),
-    ("PARTIAL_LFO", 0x11E),
-    ("PARTIAL_PITCH_ENV", 0x2D),
-    ("PARTIAL_FILTER_ENV", 0x2C),
+    ("PARTIAL_EQ", 0x1b),
+    ("PARTIAL_LFO", 0x11e),
+    ("PARTIAL_PITCH_ENV", 0x2d),
+    ("PARTIAL_FILTER_ENV", 0x2c),
     ("PARTIAL_AMP_ENV", 0x20),
     ("TONE_COMMON", 0x36),
     ("TONE_PMT", 0x26),
     ("TONE_PARTIAL", 0x100),
     ("TONE_SYNTH_COMMON", 0x9),
     ("TONE_SYNTH_PMT", 0x17),
-    ("TONE_SYNTH_PARTIAL", 0x1E),
+    ("TONE_SYNTH_PARTIAL", 0x1e),
     ("TONE_MFX", 0x110),
 ];

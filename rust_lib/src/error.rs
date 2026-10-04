@@ -64,5 +64,10 @@ impl From<std::io::Error> for Error {
         Error::Io(e)
     }
 }
+impl From<std::string::FromUtf8Error> for Error {
+    fn from(_: std::string::FromUtf8Error) -> Self {
+        Error::InvalidUtf8
+    }
+}
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

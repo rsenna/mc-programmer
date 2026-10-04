@@ -10,9 +10,9 @@ table:
 
 | Library | Status | Tests |
 |---|---|---|
-| **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 70 / 70 |
+| **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 76 / 76 |
 | **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 42 / 42 |
-| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 90 / 90 |
+| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 146 / 146 |
 
 All three libraries cover **~389 named ZEN-Core tone parameters** auto-generated
 from the official Jupiter-X/Xm MIDI Implementation, plus the full
@@ -71,21 +71,23 @@ See [`swift_lib/README.md`](swift_lib/README.md) for the full Swift guide.
 ```rust
 use mc_programmer::{LoopbackTransport, MCClient, ModelId, Pitch};
 
-let client = MCClient::new(
-    LoopbackTransport::new(ModelId::Mc707, 0xFF),
-    ModelId::Mc707.value(),
-);
-client.set_pattern(
-    1,
-    1,
-    &[
-        (Pitch::from("C1"), vec![1, 5, 9, 13]),
-        (Pitch::from("F#1"), vec![3, 7, 11, 15]),
-    ],
-    100,
-    true,
-)?;
-# Ok::<(), mc_programmer::Error>(())
+fn main() -> Result<(), mc_programmer::Error> {
+    let client = MCClient::new(
+        LoopbackTransport::new(ModelId::Mc707, 0xFF),
+        ModelId::Mc707.value(),
+    );
+    client.set_pattern(
+        1,
+        1,
+        &[
+            (Pitch::from("C1"), vec![1, 5, 9, 13]),
+            (Pitch::from("F#1"), vec![3, 7, 11, 15]),
+        ],
+        100,
+        true,
+    )?;
+    Ok(())
+}
 ```
 
 For real hardware, enable `--features midir` and construct the client with
@@ -108,7 +110,7 @@ mc-programmer/
 │   ├── pyproject.toml
 │   ├── mc_programmer/         ← package source
 │   ├── examples/              ← runnable examples (LoopbackTransport)
-│   └── tests/                 ← unittest suite (70 tests)
+│   └── tests/                 ← unittest suites (76 tests)
 │
 ├── swift_lib/                 ← Swift Package (MCProgrammer)
 │   ├── README.md
@@ -124,7 +126,7 @@ mc-programmer/
 │   └── tests/                ← integration and feature tests
 │
 ├── tools/
-│   ├── gen_zencore_params.py ← emits Python + Swift, then updates Rust data
+│   ├── gen_zencore_params.py ← stages all three language tables after generation succeeds
 │   └── gen_rust_zencore.py   ← Rust table generator used by the canonical script
 │
 └── reference/                 ← see reference/README.md
@@ -152,10 +154,10 @@ mc-programmer/
 
 ```bash
 pip install python-rtmidi          # only if you want to talk to real hardware
-PYTHONPATH=python_lib python -m unittest python_lib.tests.test_mc_programmer
+PYTHONPATH=python_lib python -m unittest discover -s python_lib/tests
 ```
 
-70 tests; runs in ~13 seconds. The longest test does a full project
+76 tests, including six generator regressions. The longest library test does a full project
 round-trip (dumps every byte of every track + clip + tone + system block
 through `LoopbackTransport`, then writes them all back).
 
@@ -178,7 +180,7 @@ cargo test --all-features
 cargo run --example four_on_the_floor
 ```
 
-90 tests including unit, integration, feature-gated transport, and doctests.
+146 tests including unit, integration, feature-gated transport, and doctests.
 
 ### Regenerating the ZEN-Core parameter tables
 

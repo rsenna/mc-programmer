@@ -52,8 +52,7 @@ pdftotext -raw -f 85 -l 88 \
   | sed -n '/^* \[MFX\]/,/^* \[Reverb\]/p' \
   >> reference/tools_jp_zcore.txt
 
-python tools/gen_zencore_params.py
-# The canonical generator above also refreshes rust_lib/src/zencore_data.rs.
+python tools/gen_zencore_params.py  # regenerates Python, Swift, and Rust tables
 ```
 
 The `.gitignore` is configured to **block** `reference/*.pdf`,

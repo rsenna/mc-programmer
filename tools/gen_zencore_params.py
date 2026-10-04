@@ -3,16 +3,17 @@
 
 Reads the raw text extracted from the Jupiter-X/Xm MIDI Implementation PDF
 (``pdftotext -raw -f 76 -l 82 JUPITER-X_Xm_MIDI_imple_eng06_W.pdf``) and
-emits the Python and Swift tables, then refreshes the Rust table from Python.
+generates the Python and Swift tables, then derives Rust from the staged Python
+table. All three outputs are staged before replacing the committed files, so a
+generation or formatting failure leaves the existing tables untouched.
 
   * ``python_lib/mc_programmer/zencore_data.py``  — native Python dicts of ZCParam
   * ``swift_lib/Sources/MCProgrammer/ZenCoreData.swift`` — same data for Swift
   * ``rust_lib/src/zencore_data.rs`` — same table data for Rust
 
-Rust derives ``rust_lib/src/zencore_data.rs`` from the committed Python table
-via ``tools/gen_rust_zencore.py``. This script is the only place that knows the
-PDF row format. To refresh the tables for a new Roland revision, regenerate
-Python and Swift here; the canonical generator then emits Rust from the fresh Python table.
+The Rust helper is ``tools/gen_rust_zencore.py``. This script is the only place
+that knows the PDF row format. The generator is run against an extracted local
+text file; no copyrighted PDF or extracted text is committed.
 
 The MC family uses both halves of the ZCore tone descriptor: the conventional
 Tone Common / PMT / Partial / Pitch-Filter-Amp Envs / LFO / EQ path and the
@@ -30,6 +31,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -472,21 +474,37 @@ def main() -> int:
 
     py_path = os.path.join(repo, "python_lib", "mc_programmer", "zencore_data.py")
     sw_path = os.path.join(repo, "swift_lib", "Sources", "MCProgrammer", "ZenCoreData.swift")
-
-    with open(py_path, "w") as f:
-        f.write(emit_python(sections, totals))
-    with open(sw_path, "w") as f:
-        f.write(emit_swift(sections, totals))
     python_lib = os.path.join(repo, "python_lib")
     rust_generator = os.path.join(here, "gen_rust_zencore.py")
     generator_env = os.environ.copy()
     generator_env["PYTHONPATH"] = os.pathsep.join(
         path for path in (python_lib, generator_env.get("PYTHONPATH", "")) if path
     )
-    subprocess.run(
-        [sys.executable, rust_generator], cwd=repo, env=generator_env, check=True
-    )
 
+    with tempfile.TemporaryDirectory(prefix=".zencore-", dir=repo) as staging:
+        staged_py = os.path.join(staging, "zencore_data.py")
+        staged_swift = os.path.join(staging, "ZenCoreData.swift")
+        staged_rust = os.path.join(staging, "zencore_data.rs")
+        with open(staged_py, "w") as f:
+            f.write(emit_python(sections, totals))
+        with open(staged_swift, "w") as f:
+            f.write(emit_swift(sections, totals))
+
+        subprocess.run(
+            [
+                sys.executable, rust_generator,
+                "--python-data", staged_py,
+                "--output", staged_rust,
+            ],
+            cwd=repo, env=generator_env, check=True
+        )
+
+        for staged, committed in (
+            (staged_py, py_path),
+            (staged_swift, sw_path),
+            (staged_rust, os.path.join(repo, "rust_lib", "src", "zencore_data.rs")),
+        ):
+            os.replace(staged, committed)
     print(f"wrote {py_path}")
     print(f"wrote {sw_path}")
     print("\nsection summary:")

@@ -66,9 +66,9 @@ sub-block. Both are now in the framework:
 
 - [x] `ZCParam` descriptor type (1-byte / 2-byte / 4-byte nibble-packed
       / variable-length ASCII encodings)
-- [x] Auto-generated parameter table (`zencore_data.py` /
-      `ZenCoreData.swift`) — built from the Jupiter-X PDF by
-      `tools/gen_zencore_params.py`, regenerable any time
+- [x] Auto-generated parameter tables (`zencore_data.py`,
+      `ZenCoreData.swift`, and `zencore_data.rs`) — built from the Jupiter-X PDF
+      by `tools/gen_zencore_params.py`, regenerable any time
 - [x] Generic `read_zc_param` / `write_zc_param` (Python) and
       `readZCParam` / `writeZCParam` (Swift)
 - [x] "Did you mean…" suggestions on parameter typos via `difflib` /
@@ -145,17 +145,19 @@ sub-block. Both are now in the framework:
 - [x] `pyproject.toml` for the Python package (`pip install -e python_lib`)
 - [x] Optional extras: `pip install mc_programmer[rtmidi]` and `mc_programmer[mido]`
 - [x] Swift Package manifest for SwiftPM
-- [x] `tools/gen_zencore_params.py` — parser/generator for the Python and Swift tables
-- [x] `tools/gen_rust_zencore.py` — generates `zencore_data.rs` from the committed Python table
+- [x] `tools/gen_zencore_params.py` — canonical parser/generator for the Python,
+      Swift, and Rust tables; it invokes `tools/gen_rust_zencore.py` as a helper
+- [x] `tools/gen_rust_zencore.py` — Rust table-generation helper, run by the
+      canonical generator
 - [x] Rust Cargo crate with optional `midir` hardware transport
 
 ### Tests
 
-- [x] Python: 70 tests via `unittest`, all passing, runs in ~13 seconds
+- [x] Python: 76 tests via `unittest`, all passing
 - [x] Swift: 42 tests via `XCTest`, all passing, runs in ~40 seconds
       (project round-trip dominates the time — exercises ~15 KB per tone
       through chunked I/O)
-- [x] Rust: 90 tests via `cargo test --all-features`, all passing
+- [x] Rust: 146 tests via `cargo test --all-features`, all passing
 
 ---
 
@@ -242,11 +244,10 @@ address before the parameter table can be added safely.
 1. **Adding a parameter**: edit
    `tools/gen_zencore_params.py`'s `SECTION_NAME_MAP` if you've found a
    new ZCore substructure in the extracted Jupiter-X text, or
-   re-extract from a newer Jupiter-X PDF revision. Run
-   `python tools/gen_zencore_params.py` to regenerate
-   `python_lib/mc_programmer/zencore_data.py` and
-   `swift_lib/Sources/MCProgrammer/ZenCoreData.swift`, then run
-   `PYTHONPATH=python_lib python3 tools/gen_rust_zencore.py` for
+   re-extract from a newer Jupiter-X PDF revision.
+   Run `python tools/gen_zencore_params.py` to regenerate all three tables:
+   `python_lib/mc_programmer/zencore_data.py`,
+   `swift_lib/Sources/MCProgrammer/ZenCoreData.swift`, and
    `rust_lib/src/zencore_data.rs`.
 2. **Adding a verified MC address**: add the matching constants to the Python,
    Swift, and Rust address-map modules, then build a parameter table for it the
@@ -259,7 +260,7 @@ address before the parameter table can be added safely.
    helper.
 4. Run all three test suites and make sure everything still passes:
    ```bash
-   PYTHONPATH=python_lib python -m unittest python_lib.tests.test_mc_programmer
+   PYTHONPATH=python_lib python -m unittest discover -s python_lib/tests
    (cd swift_lib && swift test)
    (cd rust_lib && cargo test --all-features)
    ```

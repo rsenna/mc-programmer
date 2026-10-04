@@ -109,7 +109,15 @@ pub fn note(name: &str) -> Result<u8> {
         })?
     };
 
-    let midi = (octave + 2) * 12 + offset;
+    let midi = octave
+        .checked_add(2)
+        .and_then(|adjusted| adjusted.checked_mul(12))
+        .and_then(|base| base.checked_add(offset))
+        .ok_or_else(|| {
+            Error::Value(format!(
+                "note {name:?} resolves outside the MIDI arithmetic range"
+            ))
+        })?;
     if !(0..=127).contains(&midi) {
         return Err(Error::Value(format!(
             "note {name:?} resolves to MIDI {midi} which is out of range 0..127"
@@ -237,5 +245,10 @@ mod tests {
     fn pitch_resolves() {
         assert_eq!(Pitch::from(60).resolve().unwrap(), 60);
         assert_eq!(Pitch::from("C1").resolve().unwrap(), 36);
+    }
+    #[test]
+    fn extreme_octaves_return_errors_without_overflow() {
+        assert!(note("C2147483647").is_err());
+        assert!(note("C-2147483648").is_err());
     }
 }

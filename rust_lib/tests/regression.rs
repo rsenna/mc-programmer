@@ -13,34 +13,48 @@ fn client(responses: Vec<Vec<u8>>) -> MCClient<NullTransport> {
     )
 }
 
+fn reply_at(address: u32, data: &[u8]) -> Vec<u8> {
+    build_dt1(0x5d, address, data).unwrap()
+}
+
 fn reply(data: &[u8]) -> Vec<u8> {
-    build_dt1(0x5D, 0x3000_0000, data).unwrap()
+    reply_at(0x3000_0000, data)
+}
+#[test]
+fn loopback_snapshot_matches_the_7bit_view_of_rq1_reads() {
+    let transport = LoopbackTransport::new(ModelId::Mc707, 0xff);
+    let client = MCClient::new(transport.clone(), ModelId::Mc707.value());
+    transport.preload(0, &[0xc5]);
+
+    let read = client.read(0, 2).unwrap();
+    assert_eq!(read, vec![0x45, 0x7f]);
+    assert_eq!(transport.snapshot(0, 2), read);
 }
 
 #[test]
 fn linear_addresses_carry_across_every_seven_bit_digit() {
     for (linear, packed) in [
         (0, 0),
-        (0x7F, 0x7F),
+        (0x7f, 0x7f),
         (0x80, 0x100),
-        (0x3FFF, 0x7F7F),
+        (0x3fff, 0x7f7f),
         (0x4000, 0x10000),
-        (0x1FFFFF, 0x7F7F7F),
+        (0x1fffff, 0x7f7f7f),
         (0x200000, 0x1000000),
-        (0x0FFFFFFF, 0x7F7F7F7F),
+        (0x0fffffff, 0x7f7f7f7f),
     ] {
         assert_eq!(roland_address_from_linear(linear).unwrap(), packed);
         assert_eq!(roland_address_to_linear(packed).unwrap(), linear);
     }
-    for (address, next) in [(0x7F, 0x100), (0x7F7F, 0x10000), (0x7F7F7F, 0x1000000)] {
+    for (address, next) in [(0x7f, 0x100), (0x7f7f, 0x10000), (0x7f7f7f, 0x1000000)] {
         assert_eq!(add_roland_offset(address, 1).unwrap(), next);
     }
 }
 
 #[test]
 fn address_addition_distinguishes_packed_offsets_from_byte_counts() {
-    assert_eq!(add_roland_address(0x307F_7F7F, 0x100).unwrap(), 0x3100_007F);
-    assert_eq!(add_roland_offset(0x307F_7F7F, 0x100).unwrap(), 0x3100_017F);
+    assert_eq!(add_roland_address(0x307f_7f7f, 0x100).unwrap(), 0x3100_007f);
+    assert_eq!(add_roland_offset(0x307f_7f7f, 0x100).unwrap(), 0x3100_017f);
 }
 
 #[test]
@@ -54,7 +68,7 @@ fn address_arithmetic_rejects_high_bits_and_overflow() {
         assert!(add_roland_address(0, invalid).is_err());
     }
     assert!(roland_address_from_linear(0x10000000).is_err());
-    assert!(add_roland_offset(0x7F7F7F7F, 1).is_err());
+    assert!(add_roland_offset(0x7f7f7f7f, 1).is_err());
     assert!(add_roland_offset(1, u32::MAX).is_err());
 }
 
@@ -62,7 +76,7 @@ fn address_arithmetic_rejects_high_bits_and_overflow() {
 fn motion_addresses_cover_last_lane_and_last_step_without_aliasing() {
     let map = AddressMap::new();
     assert_eq!(map.motion_step_address(0, 0, 0, 7).unwrap(), 0x2004_0070);
-    assert_eq!(map.motion_step_address(0, 0, 127, 7).unwrap(), 0x2005_7E70);
+    assert_eq!(map.motion_step_address(0, 0, 127, 7).unwrap(), 0x2005_7e70);
     for (track, clip, step, lane) in [(8, 0, 0, 0), (0, 16, 0, 0), (0, 0, 128, 0), (0, 0, 0, 8)] {
         assert!(matches!(
             map.motion_step_address(track, clip, step, lane),
@@ -73,40 +87,37 @@ fn motion_addresses_cover_last_lane_and_last_step_without_aliasing() {
 
 #[test]
 fn request_lengths_use_base_128_at_every_boundary() {
-    for (count, bytes) in [
-        (0, [0, 0, 0, 0]),
-        (127, [0, 0, 0, 127]),
-        (128, [0, 0, 1, 0]),
-        (16384, [0, 1, 0, 0]),
-        (2097152, [1, 0, 0, 0]),
-        (0x0FFFFFFF, [127; 4]),
+    for (count, bytes, checksum) in [
+        (0, [0, 0, 0, 0], 0x04),
+        (127, [0, 0, 0, 127], 0x05),
+        (128, [0, 0, 1, 0], 0x03),
+        (16384, [0, 1, 0, 0], 0x03),
+        (2097152, [1, 0, 0, 0], 0x03),
+        (0x0fffffff, [127; 4], 0x08),
     ] {
-        let message = build_rq1(0x5F, 0x7F7F7F7F, count).unwrap();
+        let message = build_rq1(0x5f, 0x7f7f7f7f, count).unwrap();
         assert_eq!(
             &message[..12],
-            &[0xF0, 0x41, 0x10, 0, 0, 0, 0x5F, 0x11, 127, 127, 127, 127]
+            &[0xf0, 0x41, 0x10, 0, 0, 0, 0x5f, 0x11, 127, 127, 127, 127]
         );
         assert_eq!(&message[12..16], &bytes);
-        assert_eq!(
-            message[8..17].iter().map(|&b| u32::from(b)).sum::<u32>() % 128,
-            0
-        );
-        assert_eq!(message[17], 0xF7);
+        assert_eq!(message[16], checksum);
+        assert_eq!(message[17], 0xf7);
     }
 }
 
 #[test]
 fn packet_builders_validate_model_and_every_payload_position() {
-    for model in [0x80, 0xFF] {
+    for model in [0x80, 0xff] {
         assert!(matches!(build_rq1(model, 0, 1), Err(Error::Value(_))));
         assert!(matches!(build_dt1(model, 0, &[]), Err(Error::Value(_))));
     }
     for position in 0..3 {
-        let mut data = [0x7F; 3];
+        let mut data = [0x7f; 3];
         data[position] = 0x80;
-        assert!(matches!(build_dt1(0x7F, 0, &data), Err(Error::Value(_))));
+        assert!(matches!(build_dt1(0x7f, 0, &data), Err(Error::Value(_))));
     }
-    assert!(build_dt1(0x7F, 0x7F7F7F7F, &[0, 0x7F]).is_ok());
+    assert!(build_dt1(0x7f, 0x7f7f7f7f, &[0, 0x7f]).is_ok());
 }
 
 #[test]
@@ -114,9 +125,7 @@ fn dt1_parser_accepts_empty_payload_and_rejects_truncated_frames() {
     let message = reply(&[]);
     assert_eq!(parse_dt1_payload(&message).unwrap().data, Vec::<u8>::new());
     for size in 0..14 {
-        assert!(
-            matches!(parse_dt1_payload(&message[..size]), Err(Error::MessageTooShort(n)) if n == size)
-        );
+        assert!(matches!(parse_dt1_payload(&message[..size]), Err(Error::MessageTooShort(n)) if n == size));
     }
 }
 
@@ -130,7 +139,7 @@ fn dt1_parser_distinguishes_bad_framing_and_wrong_command() {
             Err(Error::MissingFraming)
         ));
     }
-    let request = build_rq1(0x5D, 0, 1).unwrap();
+    let request = build_rq1(0x5d, 0, 1).unwrap();
     assert!(matches!(
         parse_dt1_payload(&request),
         Err(Error::WrongCommand(0x11))
@@ -157,8 +166,10 @@ fn note_and_motion_constructors_require_exact_slot_counts() {
 
 #[test]
 fn compact_preserves_live_order_and_metadata_and_resets_empty_lanes() {
-    let mut step = NoteStep::default();
-    step.substep = SubStep::Flam;
+    let mut step = NoteStep {
+        substep: SubStep::Flam,
+        ..NoteStep::default()
+    };
     step.components[2] = NoteComponent {
         note: 0,
         velocity: 1,
@@ -188,8 +199,10 @@ fn compact_preserves_live_order_and_metadata_and_resets_empty_lanes() {
 
 #[test]
 fn sequencer_wire_layout_covers_last_lane_and_scratch_flag() {
-    let mut step = NoteStep::default();
-    step.substep = SubStep::Quadruple;
+    let mut step = NoteStep {
+        substep: SubStep::Quadruple,
+        ..NoteStep::default()
+    };
     step.components[15] = NoteComponent {
         note: 127,
         velocity: 127,
@@ -200,10 +213,10 @@ fn sequencer_wire_layout_covers_last_lane_and_scratch_flag() {
     let raw = encode_note_step(&step);
     assert_eq!(raw.len(), 256);
     assert_eq!(&raw[..16], &[0; 16]);
-    assert_eq!(&raw[0x2E..0x30], &[7, 15]);
-    assert_eq!(raw[0x3F], 127);
-    assert_eq!(&raw[0x5E..0x60], &[12, 14]);
-    assert_eq!(raw[0x6F], 100);
+    assert_eq!(&raw[0x2e..0x30], &[7, 15]);
+    assert_eq!(raw[0x3f], 127);
+    assert_eq!(&raw[0x5e..0x60], &[12, 14]);
+    assert_eq!(raw[0x6f], 100);
     assert_eq!(raw[0x70], 3);
     assert!(raw[0x71..].iter().all(|&b| b == 0));
     let decoded = decode_note_step(&raw).unwrap();
@@ -231,8 +244,8 @@ fn sequencer_decoder_checks_minimum_length_and_unknown_substeps() {
 fn zencore_numeric_codecs_have_explicit_wire_vectors() {
     for (size, max, value, bytes) in [
         (1, 127, 127, vec![127]),
-        (2, 255, 0xA5, vec![10, 5]),
-        (4, 65535, 0xABCD, vec![10, 11, 12, 13]),
+        (2, 255, 0xa5, vec![10, 5]),
+        (4, 65535, 0xabcd, vec![10, 11, 12, 13]),
     ] {
         let param = ZCParam::new("value", 0, size, 0, max, "Value", "");
         assert_eq!(param.encode(&value.into()).unwrap(), bytes);
@@ -313,29 +326,29 @@ fn every_partial_group_rejects_invalid_partial_indexes() {
 fn null_transport_clones_share_fifo_without_raw_messages_consuming_replies() {
     let transport = NullTransport::with_responses(vec![vec![1], vec![2]]);
     let clone = transport.clone();
-    clone.send_raw(&[0xC0, 1]).unwrap();
+    clone.send_raw(&[0xc0, 1]).unwrap();
     assert_eq!(transport.transfer(&[3], 0.0).unwrap(), [1]);
     assert_eq!(clone.transfer(&[4], 0.0).unwrap(), [2]);
     assert!(transport.transfer(&[5], 0.0).unwrap().is_empty());
-    assert_eq!(clone.sent(), vec![vec![0xC0, 1], vec![3], vec![4], vec![5]]);
+    assert_eq!(clone.sent(), vec![vec![0xc0, 1], vec![3], vec![4], vec![5]]);
 }
 
 #[test]
 fn detection_accepts_all_supported_models_and_rejects_short_replies() {
     for model in [ModelId::Mc707, ModelId::Mc101, ModelId::Mv1] {
         let transport = NullTransport::with_responses(vec![vec![
-            0xF0,
-            0x7E,
+            0xf0,
+            0x7e,
             0x10,
             6,
             2,
             0x41,
             model.value(),
-            0xF7,
+            0xf7,
         ]]);
         let detected = MCClient::detect(transport.clone()).unwrap();
         assert_eq!(detected.model_id, model.value());
-        assert_eq!(transport.sent(), vec![vec![0xF0, 0x7E, 0x7F, 6, 1, 0xF7]]);
+        assert_eq!(transport.sent(), vec![vec![0xf0, 0x7e, 0x7f, 6, 1, 0xf7]]);
     }
     for size in 0..7 {
         assert!(matches!(
@@ -358,24 +371,33 @@ fn chunked_write_splits_payload_and_carries_address_at_exact_boundary() {
     for length in [1, 127, 128, 129, 256, 257] {
         let client = client(vec![]);
         let data: Vec<u8> = (0..length).map(|i| (i % 128) as u8).collect();
-        client.write_chunked(0x3000_007F, &data).unwrap();
+        client.write_chunked(0x3000_007f, &data).unwrap();
         let messages = client.transport.sent();
         assert_eq!(messages.len(), (length + 127) / 128);
         for (index, (message, chunk)) in messages.iter().zip(data.chunks(128)).enumerate() {
             let decoded = parse_dt1_payload(message).unwrap();
-            assert_eq!(decoded.address, [0x3000007F, 0x3000017F, 0x3000027F][index]);
+            assert_eq!(decoded.address, [0x3000007f, 0x3000017f, 0x3000027f][index]);
             assert_eq!(decoded.data, chunk);
         }
     }
 }
 
 #[test]
-fn chunked_read_zero_fills_missing_reply_and_requests_short_tail() {
-    let client = client(vec![reply(&[7; 128]), vec![], reply(&[9])]);
-    let data = client.read_chunked(0x3000_007F, 257).unwrap();
+fn chunked_read_rejects_missing_reply_and_preserves_short_tail() {
+    let missing = client(vec![reply_at(0x3000_007f, &[7; 128]), vec![]]);
+    assert!(missing.read_chunked(0x3000_007f, 257).is_err());
+    assert_eq!(missing.transport.sent().len(), 2);
+
+    let client = client(vec![
+        reply_at(0x3000_007f, &[7; 128]),
+        reply_at(0x3000_017f, &[8; 128]),
+        reply_at(0x3000_027f, &[9]),
+    ]);
+    let data = client.read_chunked(0x3000_007f, 257).unwrap();
     assert_eq!(&data[..128], &[7; 128]);
-    assert_eq!(&data[128..256], &[0; 128]);
+    assert_eq!(&data[128..256], &[8; 128]);
     assert_eq!(data[256], 9);
+
     let messages = client.transport.sent();
     assert_eq!(messages.len(), 3);
     for (index, message) in messages.iter().enumerate() {
@@ -405,7 +427,7 @@ fn client_propagates_transport_failures() {
             Err(Error::Midi("disconnected".into()))
         }
     }
-    let client = MCClient::new(FailingTransport, 0x5D);
+    let client = MCClient::new(FailingTransport, 0x5d);
     assert!(matches!(client.read_chunked(0, 129), Err(Error::Midi(_))));
     assert!(matches!(
         client.write_chunked(0, &[0; 129]),
@@ -453,7 +475,7 @@ fn program_change_upper_boundaries_use_channel_sixteen() {
     client.select_clip(8, 16, Some(16)).unwrap();
     assert_eq!(
         client.transport.sent(),
-        vec![vec![0xCF, 127], vec![0xCF, 15]]
+        vec![vec![0xcf, 127], vec![0xcf, 15]]
     );
 }
 
@@ -470,7 +492,7 @@ fn full_note_step_drops_new_note_without_writing() {
         SubStep::None,
     )
     .unwrap();
-    let client = client(vec![reply(&encode_note_step(&full))]);
+    let client = client(vec![reply_at(0x2003_0000, &encode_note_step(&full))]);
     client.place_note(1, 1, 1, 72u8, 100, 2.5).unwrap();
     let sent = client.transport.sent();
     assert_eq!(sent.len(), 1);
@@ -479,15 +501,16 @@ fn full_note_step_drops_new_note_without_writing() {
 
 #[test]
 fn note_ties_stop_at_last_clip_step_and_velocity_is_clamped() {
-    let client = client(vec![reply(&encode_note_step(&NoteStep::default()))]);
+    let address = AddressMap::new().note_step_address(7, 15, 127).unwrap();
+    let client = client(vec![reply_at(
+        address,
+        &encode_note_step(&NoteStep::default()),
+    )]);
     client.place_note(8, 16, 128, 127u8, 255, 3.5).unwrap();
     let sent = client.transport.sent();
     assert_eq!(sent.len(), 2);
     let message = parse_dt1_payload(&sent[1]).unwrap();
-    assert_eq!(
-        message.address,
-        client.addresses.note_step_address(7, 15, 127).unwrap()
-    );
+    assert_eq!(message.address, address);
     let step = decode_note_step(&message.data).unwrap();
     assert_eq!(
         step.active_components(),
@@ -597,7 +620,7 @@ fn preset_json_accepts_uppercase_prefix_whitespace_and_null_name() {
 fn tone_restore_accepts_exact_slot_end_but_rejects_one_byte_overrun() {
     let mut tone = preset();
     tone.model.clear(); // Untagged presets may be loaded onto any supported model.
-    tone.regions[0].offset = 0x0001_7F7F;
+    tone.regions[0].offset = 0x0001_7f7f;
     tone.regions[0].data = vec![42];
     let client = client(vec![]);
     client.load_tone(1, Some(1), &tone).unwrap();
@@ -605,7 +628,7 @@ fn tone_restore_accepts_exact_slot_end_but_rejects_one_byte_overrun() {
     assert_eq!(messages.len(), 1);
     assert_eq!(
         parse_dt1_payload(&messages[0]).unwrap().address,
-        0x3001_7F7F
+        0x3001_7f7f
     );
     tone.regions[0].data.push(43);
     assert!(matches!(

@@ -9,7 +9,7 @@
 //! let client = MCClient::new(transport, ModelId::Mc707.value());
 //!
 //! let mut step = client.read_note_step(0, 0, 4).unwrap();
-//! step.components[0].note = 60; // C4
+//! step.components[0].note = 60; // C3 (Roland convention)
 //! client.write_note_step(0, 0, 4, &step).unwrap();
 //! ```
 //!
@@ -80,11 +80,33 @@ impl<T: Transport> MCClient<T> {
     /// An empty transport reply yields an empty vector; framing and transport errors propagate.
     pub fn read(&self, address: u32, count: u32) -> Result<Vec<u8>> {
         let msg = build_rq1(self.model_id, address, count)?;
+        if count == 0 {
+            return Ok(Vec::new());
+        }
         let reply = self.transport.transfer(&msg, 0.1)?;
         if reply.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(parse_dt1_payload(&reply)?.data)
+        let response = parse_dt1_payload(&reply)?;
+        if reply[6] != self.model_id {
+            return Err(Error::Midi(format!(
+                "DT1 model ID does not match request: expected 0x{:02X}, got 0x{:02X}",
+                self.model_id, reply[6]
+            )));
+        }
+        if response.address != address {
+            return Err(Error::Midi(format!(
+                "DT1 address mismatch: requested 0x{address:08X}, got 0x{:08X}",
+                response.address
+            )));
+        }
+        if response.data.len() != count as usize {
+            return Err(Error::Midi(format!(
+                "DT1 payload length mismatch at 0x{address:08X}: requested {count}, got {}",
+                response.data.len()
+            )));
+        }
+        Ok(response.data)
     }
 
     /// Send 7-bit data to a packed Roland address in a DT1 message.
@@ -95,7 +117,8 @@ impl<T: Transport> MCClient<T> {
         Ok(())
     }
 
-    /// Read a multi-byte parameter, MSB-first nibble-packed.
+    /// Read a parameter; single-byte values are raw 7-bit, wider values are
+    /// MSB-first nibble-packed into the returned `u32`.
     pub fn read_param(&self, address: u32, size: usize) -> Result<u32> {
         if size > 8 {
             return Err(Error::Value(format!(
@@ -103,15 +126,13 @@ impl<T: Transport> MCClient<T> {
             )));
         }
         let data = self.read(address, size as u32)?;
-        if data.len() > 8 {
-            return Err(Error::Value(format!(
-                "parameter response size {} exceeds the 8-byte u32 packing limit",
-                data.len()
-            )));
+
+        if size == 1 {
+            return Ok(data.first().copied().map(u32::from).unwrap_or(0));
         }
         let mut value = 0u32;
         for (i, &b) in data.iter().enumerate() {
-            value |= u32::from(b & 0x0F) << (4 * (data.len() - i - 1));
+            value |= u32::from(b & 0x0f) << (4 * (data.len() - i - 1));
         }
         Ok(value)
     }
@@ -125,11 +146,23 @@ impl<T: Transport> MCClient<T> {
                 "parameter size {size} exceeds the 8-byte u32 packing limit"
             )));
         }
+        let fits = if size == 1 {
+            value <= 0x7f
+        } else if size < 8 {
+            value < (1u32 << (4 * size))
+        } else {
+            true
+        };
+        if !fits {
+            return Err(Error::Value(format!(
+                "value 0x{value:X} does not fit in {size} parameter bytes"
+            )));
+        }
         if size == 1 {
-            return self.write(address, &[(value & 0x7F) as u8]);
+            return self.write(address, &[value as u8]);
         }
         let nibbles: Vec<u8> = (0..size)
-            .map(|i| ((value >> (4 * (size - i - 1))) & 0x0F) as u8)
+            .map(|i| ((value >> (4 * (size - i - 1))) & 0x0f) as u8)
             .collect();
         self.write(address, &nibbles)
     }
@@ -216,10 +249,10 @@ impl<T: Transport> MCClient<T> {
         add_roland_address(substructure, param.offset)
     }
 
-    /// Read any registered ZEN-Core parameter by name.
+    /// Read a registered ZEN-Core parameter by name.
     ///
-    /// Returns `None` if the device returned no data. For `Partial*` groups,
-    /// also pass `partial_idx` in 1..4.
+    /// Returns `None` for an empty transport reply. Partial groups require
+    /// `partial_idx` in 1..4; malformed replies return an error.
     pub fn read_zc_param(
         &self,
         trk_idx: usize,
@@ -232,9 +265,10 @@ impl<T: Transport> MCClient<T> {
         let addr = self.zc_param_address(trk_idx, clip_idx, group, &param, partial_idx)?;
         let data = self.read(addr, param.size as u32)?;
         if data.is_empty() {
-            return Ok(None);
+            Ok(None)
+        } else {
+            Ok(Some(param.decode(&data)?))
         }
-        Ok(Some(param.decode(&data)?))
     }
 
     /// Write any registered ZEN-Core parameter by name.
@@ -285,7 +319,7 @@ impl<T: Transport> MCClient<T> {
     /// Number of physical tracks on the connected device (4 or 8).
     pub fn num_tracks(&self) -> usize {
         match self.model_id {
-            0x5E => 4, // MC-101
+            0x5e => 4, // MC-101
             _ => 8,    // MC-707 / MV-1 / unknown
         }
     }
@@ -519,7 +553,7 @@ impl<T: Transport> MCClient<T> {
                 "control_channel={control_channel} out of range — must be 1..16"
             )));
         }
-        let status = 0xC0 | ((control_channel - 1) & 0x0F) as u8;
+        let status = 0xc0 | ((control_channel - 1) & 0x0f) as u8;
         self.transport.send_raw(&[status, (scene_number - 1) as u8])
     }
 
@@ -538,7 +572,7 @@ impl<T: Transport> MCClient<T> {
                 "track_channel={channel} out of range — must be 1..16"
             )));
         }
-        let status = 0xC0 | ((channel - 1) & 0x0F) as u8;
+        let status = 0xc0 | ((channel - 1) & 0x0f) as u8;
         self.transport.send_raw(&[status, (clip_number - 1) as u8])
     }
 
@@ -560,9 +594,12 @@ impl<T: Transport> MCClient<T> {
                 address,
                 u32::try_from(offset).map_err(|_| Error::Value("chunk offset exceeds u32".to_string()))?,
             )?;
-            let mut chunk = self.read(chunk_address, n as u32)?;
-            if chunk.is_empty() {
-                chunk = vec![0; n];
+            let chunk = self.read(chunk_address, n as u32)?;
+            if chunk.len() != n {
+                return Err(Error::Midi(format!(
+                    "chunk at 0x{chunk_address:08X} has {} bytes; expected {n}",
+                    chunk.len()
+                )));
             }
             out.extend_from_slice(&chunk);
             offset += n;

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// Two-way Sys-Ex transport for the MC family.
 ///
@@ -24,8 +24,8 @@ use crate::error::Result;
 ///   (Control Change, Program Change, …) and return immediately. The MC
 ///   family uses this for Scene and Clip selection via Program Change.
 ///
-/// `send_raw` has a default no-op implementation so existing transports keep
-/// building without it.
+/// `send_raw` has a default explicit unsupported-operation error so custom
+/// transports cannot report Program Change operations as successful no-ops.
 pub trait Transport: Send + Sync {
     /// Send a complete SysEx message and collect a reply within `timeout` seconds.
     /// Return an empty vector when no reply is received.
@@ -33,7 +33,9 @@ pub trait Transport: Send + Sync {
 
     /// Send a non-SysEx MIDI message; the default implementation does nothing.
     fn send_raw(&self, _message: &[u8]) -> Result<()> {
-        Ok(())
+        Err(Error::Midi(
+            "transport does not support raw MIDI messages".to_string(),
+        ))
     }
 }
 

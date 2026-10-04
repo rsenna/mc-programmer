@@ -10,7 +10,7 @@ use mc_programmer::{LoopbackTransport, MCClient, ModelId};
 /// Center track 2 coarse tune, then increment and print it five times using loopback.
 fn main() {
     let client = MCClient::new(
-        LoopbackTransport::new(ModelId::Mc707, 0xFF),
+        LoopbackTransport::new(ModelId::Mc707, 0xff),
         ModelId::Mc707.value(),
     );
 

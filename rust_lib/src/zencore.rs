@@ -25,9 +25,8 @@
 //! | Tone Synth PMT      | `0x3D00`| Synth partial mix / structure             |
 //! | Tone Synth Partial  | `0x3E00`+ `n*0x100` | Synth OSC per partial          |
 //!
-//! The actual parameter table (~500 entries) is auto-generated from Roland's
-//! Jupiter-X PDF — see `src/zencore_data.rs` and
-//! `tools/gen_rust_zencore.py`.
+//! The actual table contains 389 parameters and is generated from Roland's
+//! Jupiter-X PDF — see `src/zencore_data.rs` and `tools/gen_rust_zencore.py`.
 
 use crate::error::{Error, Result};
 use crate::zencore_data;
@@ -52,7 +51,7 @@ pub const PARTIAL_PITCH_ENV_STRIDE: u32 = 0x0100;
 pub const PARTIAL_FILTER_ENV_BASE: u32 = 0x2800;
 pub const PARTIAL_FILTER_ENV_STRIDE: u32 = 0x0100;
 
-pub const PARTIAL_AMP_ENV_BASE: u32 = 0x2C00;
+pub const PARTIAL_AMP_ENV_BASE: u32 = 0x2c00;
 pub const PARTIAL_AMP_ENV_STRIDE: u32 = 0x0100;
 
 /// Partial LFO has a *bigger* stride because the LFO struct is 0x11E bytes
@@ -65,9 +64,9 @@ pub const PARTIAL_EQ_STRIDE: u32 = 0x0100;
 
 /// SuperNATURAL synth half of the ZCore tone descriptor — the MC's OSC type /
 /// structure / cross-mod / unison parameters live here.
-pub const TONE_SYNTH_COMMON_OFFS: u32 = 0x3C00;
-pub const TONE_SYNTH_PMT_OFFS: u32 = 0x3D00;
-pub const TONE_SYNTH_PARTIAL_BASE: u32 = 0x3E00;
+pub const TONE_SYNTH_COMMON_OFFS: u32 = 0x3c00;
+pub const TONE_SYNTH_PMT_OFFS: u32 = 0x3d00;
+pub const TONE_SYNTH_PARTIAL_BASE: u32 = 0x3e00;
 pub const TONE_SYNTH_PARTIAL_STRIDE: u32 = 0x0100;
 
 /// Number of partials in a conventional ZEN-Core Tone (Roland standard).
@@ -84,7 +83,11 @@ pub fn partial_offset(partial_idx: usize, base: u32, stride: u32) -> Result<u32>
             "partial index out of range: {partial_idx}"
         )));
     }
-    Ok(base + ((partial_idx - 1) as u32) * stride)
+    let partial_delta = ((partial_idx - 1) as u32)
+        .checked_mul(stride)
+        .ok_or_else(|| Error::Value("partial offset multiplication overflow".to_string()))?;
+    base.checked_add(partial_delta)
+        .ok_or_else(|| Error::Value("partial offset addition overflow".to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -159,8 +162,6 @@ pub struct ZCParam {
     pub label: &'static str,
     /// True for variable-length ASCII fields.
     pub ascii: bool,
-    /// True for signed two's-complement payloads.
-    pub signed: bool,
     /// Original Roland row text, kept for display.
     pub notes: &'static str,
 }
@@ -189,7 +190,6 @@ impl ZCParam {
             default: 0,
             label,
             ascii,
-            signed: false,
             notes,
         }
     }
@@ -200,6 +200,9 @@ impl ZCParam {
             let s = value
                 .as_str()
                 .ok_or_else(|| Error::Value(format!("{}: expected string", self.name)))?;
+            if !s.is_ascii() {
+                return Err(Error::Value(format!("{}: expected ASCII text", self.name)));
+            }
             return Ok(self.encode_ascii(s));
         }
 
@@ -215,13 +218,13 @@ impl ZCParam {
         }
 
         Ok(match self.size {
-            1 => vec![(v & 0x7F) as u8],
-            2 => vec![((v >> 4) & 0x0F) as u8, (v & 0x0F) as u8],
+            1 => vec![(v & 0x7f) as u8],
+            2 => vec![((v >> 4) & 0x0f) as u8, (v & 0x0f) as u8],
             4 => vec![
-                ((v >> 12) & 0x0F) as u8,
-                ((v >> 8) & 0x0F) as u8,
-                ((v >> 4) & 0x0F) as u8,
-                (v & 0x0F) as u8,
+                ((v >> 12) & 0x0f) as u8,
+                ((v >> 8) & 0x0f) as u8,
+                ((v >> 4) & 0x0f) as u8,
+                (v & 0x0f) as u8,
             ],
             _ => {
                 return Err(Error::Value(format!(
@@ -247,13 +250,13 @@ impl ZCParam {
         }
 
         let v = match self.size {
-            1 => (raw[0] & 0x7F) as i32,
-            2 => (((raw[0] & 0x0F) as i32) << 4) | (raw[1] & 0x0F) as i32,
+            1 => (raw[0] & 0x7f) as i32,
+            2 => (((raw[0] & 0x0f) as i32) << 4) | (raw[1] & 0x0f) as i32,
             4 => {
-                (((raw[0] & 0x0F) as i32) << 12)
-                    | (((raw[1] & 0x0F) as i32) << 8)
-                    | (((raw[2] & 0x0F) as i32) << 4)
-                    | (raw[3] & 0x0F) as i32
+                (((raw[0] & 0x0f) as i32) << 12)
+                    | (((raw[1] & 0x0f) as i32) << 8)
+                    | (((raw[2] & 0x0f) as i32) << 4)
+                    | (raw[3] & 0x0f) as i32
             }
             _ => {
                 return Err(Error::Value(format!(
@@ -272,12 +275,12 @@ impl ZCParam {
         let mut out: Vec<u8> = value
             .chars()
             .take(size)
-            .map(|c| (c as u32 & 0x7F) as u8)
+            .map(|c| (c as u32 & 0x7f) as u8)
             .collect();
         out.resize(size, 0x20); // right-pad with spaces
         out.into_iter()
             .map(|b| {
-                if (0x20..=0x7E).contains(&b) {
+                if (0x20..=0x7e).contains(&b) {
                     b
                 } else {
                     b'?'
@@ -290,7 +293,7 @@ impl ZCParam {
     fn decode_ascii(&self, raw: &[u8]) -> String {
         let mut s = String::new();
         for &b in raw.iter().take(self.size as usize) {
-            s.push(if (0x20..=0x7E).contains(&b) {
+            s.push(if (0x20..=0x7e).contains(&b) {
                 b as char
             } else {
                 ' '
@@ -464,5 +467,17 @@ mod tests {
         let encoded = p.encode(&ZCValue::Int(70)).unwrap();
         assert_eq!(encoded, vec![70]);
         assert_eq!(p.decode(&encoded).unwrap(), ZCValue::Int(70));
+    }
+
+    #[test]
+    fn partial_offset_rejects_arithmetic_overflow() {
+        assert!(partial_offset(2, u32::MAX, 1).is_err());
+        assert!(partial_offset(4, 0, u32::MAX).is_err());
+    }
+
+    #[test]
+    fn ascii_name_encoding_rejects_non_ascii_text() {
+        let parameter = lookup(ParamGroup::Common, "name").unwrap();
+        assert!(parameter.encode(&ZCValue::Str("Méga".to_string())).is_err());
     }
 }

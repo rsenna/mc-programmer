@@ -13,7 +13,12 @@ use mc_programmer::{
 
 /// Create an MC-707 memory transport whose unwritten bytes are `0xFF`.
 fn loopback() -> LoopbackTransport {
-    LoopbackTransport::new(ModelId::Mc707, 0xFF)
+    LoopbackTransport::new(ModelId::Mc707, 0xff)
+}
+const NO_WRITE_SENTINEL: u8 = 0x6d;
+
+fn seed_no_write_sentinel(transport: &LoopbackTransport, address: u32) {
+    transport.preload(address, &[NO_WRITE_SENTINEL]);
 }
 
 /// Create an MC-707 client over a fresh loopback device.
@@ -23,7 +28,7 @@ fn client() -> MCClient<LoopbackTransport> {
 
 /// Create a four-track MC-101 client over a fresh loopback device.
 fn client_101() -> MCClient<LoopbackTransport> {
-    let t = LoopbackTransport::new(ModelId::Mc101, 0xFF);
+    let t = LoopbackTransport::new(ModelId::Mc101, 0xff);
     MCClient::new(t, ModelId::Mc101.value())
 }
 
@@ -34,10 +39,7 @@ fn client_101() -> MCClient<LoopbackTransport> {
 #[test]
 fn checksum_is_complement_to_128() {
     let payload = [0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
-    assert_eq!(
-        roland_checksum(&payload),
-        (128 - payload.iter().map(|b| *b as usize).sum::<usize>() % 128) as u8 & 0x7F
-    );
+    assert_eq!(roland_checksum(&payload), 0x5f);
 }
 
 #[test]
@@ -116,8 +118,8 @@ fn round_trip_complex_step() {
 #[test]
 fn empty_note_sentinel() {
     let encoded = encode_note_step(&NoteStep::default());
-    assert_eq!(encoded[0x10], 0x0F);
-    assert_eq!(encoded[0x11], 0x0F);
+    assert_eq!(encoded[0x10], 0x0f);
+    assert_eq!(encoded[0x11], 0x0f);
 }
 
 #[test]
@@ -148,8 +150,8 @@ fn write_note_step_emits_sysex() {
 
     let sent = c.transport.sent();
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0][0], 0xF0);
-    assert_eq!(*sent[0].last().unwrap(), 0xF7);
+    assert_eq!(sent[0][0], 0xf0);
+    assert_eq!(*sent[0].last().unwrap(), 0xf7);
     assert_eq!(sent[0][7], 0x12); // DT1
 }
 
@@ -255,15 +257,15 @@ fn substructure_offset_dispatch() {
     );
     assert_eq!(
         substructure_offset(ParamGroup::SynthCommon, 1).unwrap(),
-        0x3C00
+        0x3c00
     );
     assert_eq!(
         substructure_offset(ParamGroup::SynthPmt, 1).unwrap(),
-        0x3D00
+        0x3d00
     );
     assert_eq!(
         substructure_offset(ParamGroup::SynthPartial, 1).unwrap(),
-        0x3E00
+        0x3e00
     );
     assert_eq!(
         substructure_offset(ParamGroup::SynthPartial, 4).unwrap(),
@@ -438,10 +440,10 @@ fn list_and_describe_parameters() {
 fn select_scene_emits_program_change() {
     let c = client();
     c.select_scene(5, 1).unwrap();
-    assert_eq!(c.transport.sent_raw(), vec![vec![0xC0, 4]]);
+    assert_eq!(c.transport.sent_raw(), vec![vec![0xc0, 4]]);
 
     c.select_scene(128, 16).unwrap();
-    assert_eq!(c.transport.sent_raw()[1], [0xCF, 127]);
+    assert_eq!(c.transport.sent_raw()[1], [0xcf, 127]);
     assert!(c.select_scene(0, 1).is_err());
 }
 
@@ -449,10 +451,10 @@ fn select_scene_emits_program_change() {
 fn select_clip_channel_mapping() {
     let c = client();
     c.select_clip(3, 12, None).unwrap(); // track 3 -> channel 3
-    assert_eq!(c.transport.sent_raw()[0], [0xC2, 11]);
+    assert_eq!(c.transport.sent_raw()[0], [0xc2, 11]);
 
     c.select_clip(1, 4, Some(10)).unwrap();
-    assert_eq!(c.transport.sent_raw()[1], [0xC9, 3]);
+    assert_eq!(c.transport.sent_raw()[1], [0xc9, 3]);
 
     assert!(c.select_clip(1, 17, None).is_err());
     assert!(c.select_clip(9, 1, None).is_err());
@@ -532,7 +534,7 @@ fn tone_preset_json_roundtrip() {
         vec![ToneRegion {
             offset: 0x18,
             label: "tone_common".to_string(),
-            data: vec![70, 0x00, 0xFF],
+            data: vec![70, 0x00, 0xff],
         }],
     );
     let json = preset.to_json();
@@ -775,8 +777,9 @@ fn malformed_project_json_requires_numbered_fields() {
 /// Verify forced MC-707 restores reject tracks absent on the MC-101 before writing track 1.
 #[test]
 fn forced_cross_model_load_validates_every_track_before_writing() {
-    let transport = LoopbackTransport::new(ModelId::Mc101, 0xFF);
+    let transport = LoopbackTransport::new(ModelId::Mc101, 0xff);
     let probe = transport.clone();
+    seed_no_write_sentinel(&probe, mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0]);
     let c = MCClient::new(transport, ModelId::Mc101.value());
     let project = Project {
         model: "MC-707".to_string(),
@@ -803,7 +806,7 @@ fn forced_cross_model_load_validates_every_track_before_writing() {
     assert!(err.to_string().contains("track_number"));
     assert_eq!(
         probe.snapshot(mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0], 1),
-        vec![0xFF]
+        vec![NO_WRITE_SENTINEL]
     );
 }
 
@@ -822,13 +825,18 @@ fn zencore_parameter_decode_rejects_truncated_payload() {
 
 #[test]
 fn zencore_client_rejects_truncated_parameter_reply() {
-    let reply = build_dt1(ModelId::Mc707.value(), 0x3000_0000, &[0x00, 0x01]).unwrap();
-    let transport = NullTransport::with_responses(vec![reply]);
-    let c = MCClient::new(transport, ModelId::Mc707.value());
+    struct ShortResponse;
+    impl mc_programmer::Transport for ShortResponse {
+        fn transfer(&self, request: &[u8], _timeout: f64) -> std::result::Result<Vec<u8>, mc_programmer::Error> {
+            let address = u32::from_be_bytes([request[8], request[9], request[10], request[11]]);
+            Ok(build_dt1(request[6], address, &[0x00, 0x01]).unwrap())
+        }
+    }
+    let c = MCClient::new(ShortResponse, ModelId::Mc707.value());
     let error = c
         .read_zc_param(0, Some(0), "eq_low_gain", ParamGroup::PartialEq, 1)
         .unwrap_err();
-    assert!(error.to_string().contains("expected 4 bytes"));
+    assert!(error.to_string().contains("payload length mismatch"));
 }
 
 #[test]
@@ -837,14 +845,11 @@ fn unicode_note_name_returns_error_without_panicking() {
 }
 
 #[test]
-fn short_rq1_returns_empty_reply_without_panicking() {
+fn short_rq1_is_rejected_without_panicking() {
     let transport = loopback();
-    let request = [0xF0, 0x41, 0x10, 0, 0, 0, 0x5D, 0x11, 0, 0, 0, 0, 0, 0xF7];
-    assert!(
-        mc_programmer::Transport::transfer(&transport, &request, 0.1)
-            .unwrap()
-            .is_empty()
-    );
+    let request = [0xf0, 0x41, 0x10, 0, 0, 0, 0x5d, 0x11, 0, 0, 0, 0, 0, 0xf7];
+    let error = mc_programmer::Transport::transfer(&transport, &request, 0.1).unwrap_err();
+    assert!(error.to_string().contains("18"));
 }
 
 /// Verify a short settings block leaves the destination track untouched.
@@ -852,6 +857,7 @@ fn short_rq1_returns_empty_reply_without_panicking() {
 fn project_rejects_wrong_track_settings_size_before_writing() {
     let transport = loopback();
     let probe = transport.clone();
+    seed_no_write_sentinel(&probe, mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0]);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let project = Project {
         model: "MC-707".into(),
@@ -869,7 +875,7 @@ fn project_rejects_wrong_track_settings_size_before_writing() {
     assert!(error.to_string().contains("settings"));
     assert_eq!(
         probe.snapshot(mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0], 1),
-        vec![0xFF]
+        vec![NO_WRITE_SENTINEL]
     );
 }
 /// Verify an unrecognized but 7-bit step scale is restored without normalization.
@@ -910,6 +916,7 @@ fn project_preserves_unknown_7bit_step_scale() {
 fn project_rejects_high_bit_step_scale_before_writing() {
     let transport = loopback();
     let probe = transport.clone();
+    seed_no_write_sentinel(&probe, mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0]);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let project = Project {
         model: "MC-707".into(),
@@ -935,7 +942,7 @@ fn project_rejects_high_bit_step_scale_before_writing() {
     assert!(error.to_string().contains("step_scale"));
     assert_eq!(
         probe.snapshot(mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0], 1),
-        vec![0xFF]
+        vec![NO_WRITE_SENTINEL]
     );
 }
 
@@ -943,6 +950,7 @@ fn project_rejects_high_bit_step_scale_before_writing() {
 fn project_rejects_partial_step_records_before_writing() {
     let transport = loopback();
     let probe = transport.clone();
+    seed_no_write_sentinel(&probe, mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0]);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let project = Project {
         model: "MC-707".into(),
@@ -968,7 +976,7 @@ fn project_rejects_partial_step_records_before_writing() {
     assert!(error.to_string().contains("note_steps"));
     assert_eq!(
         probe.snapshot(mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0], 1),
-        vec![0xFF]
+        vec![NO_WRITE_SENTINEL]
     );
 }
 
@@ -977,6 +985,7 @@ fn project_rejects_partial_step_records_before_writing() {
 fn project_rejects_tone_region_outside_descriptor_before_writing() {
     let transport = loopback();
     let probe = transport.clone();
+    seed_no_write_sentinel(&probe, mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0]);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let project = Project {
         model: "MC-707".into(),
@@ -1002,14 +1011,14 @@ fn project_rejects_tone_region_outside_descriptor_before_writing() {
     assert!(error.to_string().contains("tone region"));
     assert_eq!(
         probe.snapshot(mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0], 1),
-        vec![0xFF]
+        vec![NO_WRITE_SENTINEL]
     );
 }
 
 /// Verify forced cross-model restore also bypasses nested tone model tags.
 #[test]
 fn force_overrides_nested_tone_model_tags() {
-    let transport = LoopbackTransport::new(ModelId::Mc101, 0xFF);
+    let transport = LoopbackTransport::new(ModelId::Mc101, 0xff);
     let probe = transport.clone();
     let c = MCClient::new(transport, ModelId::Mc101.value());
     let project = Project {
@@ -1044,6 +1053,7 @@ fn force_overrides_nested_tone_model_tags() {
 fn oversized_system_block_is_rejected_before_writing() {
     let transport = loopback();
     let probe = transport.clone();
+    seed_no_write_sentinel(&probe, mc_programmer::project::SYSTEM_BLOCK_ADDRESS);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let mut project = Project::new("MC-707", None, vec![]);
     project.system_block = vec![0; mc_programmer::project::SYSTEM_BLOCK_SIZE + 1];
@@ -1051,20 +1061,17 @@ fn oversized_system_block_is_rejected_before_writing() {
     assert!(error.to_string().contains("system_block"));
     assert_eq!(
         probe.snapshot(mc_programmer::project::SYSTEM_BLOCK_ADDRESS, 1),
-        vec![0xFF]
+        vec![NO_WRITE_SENTINEL]
     );
 }
 
 #[test]
-fn short_rq1_without_checksum_is_ignored() {
+fn short_rq1_without_checksum_is_rejected() {
     let transport = loopback();
     let mut request = mc_programmer::build_rq1(ModelId::Mc707.value(), 0x2000_0000, 1).unwrap();
     request.remove(request.len() - 2);
-    assert!(
-        mc_programmer::Transport::transfer(&transport, &request, 0.1)
-            .unwrap()
-            .is_empty()
-    );
+    let error = mc_programmer::Transport::transfer(&transport, &request, 0.1).unwrap_err();
+    assert!(error.to_string().contains("18"));
 }
 
 /// Verify every project payload category rejects high-bit data before writing track settings.
@@ -1130,12 +1137,13 @@ fn project_rejects_high_bit_payloads_before_any_write() {
     for (field, project) in cases {
         let transport = loopback();
         let probe = transport.clone();
+        seed_no_write_sentinel(&probe, mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0]);
         let c = MCClient::new(transport, ModelId::Mc707.value());
         let error = project.load_into(&c, false).unwrap_err();
         assert!(error.to_string().contains("0x80"), "{field}: {error}");
         assert_eq!(
             probe.snapshot(mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0], 1),
-            vec![0xFF],
+            vec![NO_WRITE_SENTINEL],
             "{field} validation happened after a write"
         );
     }
@@ -1146,12 +1154,13 @@ fn project_rejects_high_bit_payloads_before_any_write() {
 fn chunked_write_rejects_high_bit_bytes_before_first_chunk() {
     let transport = loopback();
     let probe = transport.clone();
+    seed_no_write_sentinel(&probe, 0x2000_0000);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let mut data = vec![0x40; MCClient::<LoopbackTransport>::CHUNK_SIZE + 1];
     data[MCClient::<LoopbackTransport>::CHUNK_SIZE] = 0x80;
     let error = c.write_chunked(0x2000_0000, &data).unwrap_err();
     assert!(error.to_string().contains("128"));
-    assert_eq!(probe.snapshot(0x2000_0000, 1), vec![0xFF]);
+    assert_eq!(probe.snapshot(0x2000_0000, 1), vec![NO_WRITE_SENTINEL]);
 }
 
 /// Verify a later region outside the tone slot leaves both destination and adjacent slot untouched.
@@ -1163,6 +1172,8 @@ fn standalone_tone_load_rejects_out_of_slot_region_before_writing() {
     let base = c.addresses.zencore_tone_address(0, None).unwrap();
     let adjacent =
         mc_programmer::addresses::add_roland_address(base, mc_programmer::addresses::ZENCORE_TONE_ALIGNMENT).unwrap();
+    seed_no_write_sentinel(&probe, base);
+    seed_no_write_sentinel(&probe, adjacent);
     let preset = TonePreset::new(
         "MC-707",
         None,
@@ -1181,8 +1192,8 @@ fn standalone_tone_load_rejects_out_of_slot_region_before_writing() {
     );
     let error = c.load_tone(1, None, &preset).unwrap_err();
     assert!(error.to_string().contains("descriptor slot"));
-    assert_eq!(probe.snapshot(base, 1), vec![0xFF]);
-    assert_eq!(probe.snapshot(adjacent, 1), vec![0xFF]);
+    assert_eq!(probe.snapshot(base, 1), vec![NO_WRITE_SENTINEL]);
+    assert_eq!(probe.snapshot(adjacent, 1), vec![NO_WRITE_SENTINEL]);
 }
 
 /// Verify high-bit data in a later tone region prevents earlier valid regions from being written.
@@ -1192,6 +1203,7 @@ fn standalone_tone_load_rejects_later_invalid_region_before_writing() {
     let probe = transport.clone();
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let base = c.addresses.zencore_tone_address(0, None).unwrap();
+    seed_no_write_sentinel(&probe, base);
     let preset = TonePreset::new(
         "MC-707",
         None,
@@ -1210,12 +1222,12 @@ fn standalone_tone_load_rejects_later_invalid_region_before_writing() {
     );
     let error = c.load_tone(1, None, &preset).unwrap_err();
     assert!(error.to_string().contains("0x80"));
-    assert_eq!(probe.snapshot(base, 1), vec![0xFF]);
+    assert_eq!(probe.snapshot(base, 1), vec![NO_WRITE_SENTINEL]);
 }
 
 #[test]
 fn client_rejects_invalid_model_id_before_transport_use() {
-    let c = MCClient::new(NullTransport::new(), 0xD5);
+    let c = MCClient::new(NullTransport::new(), 0xd5);
     let error = c.read(0x2000_0000, 1).unwrap_err();
     assert!(error.to_string().contains("model ID"));
 }
@@ -1234,10 +1246,11 @@ fn read_param_rejects_width_larger_than_u32() {
 fn write_param_rejects_width_larger_than_u32_before_writing() {
     let transport = loopback();
     let probe = transport.clone();
+    seed_no_write_sentinel(&probe, 0x2000_0000);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let error = c.write_param(0x2000_0000, 0x1234, 9).unwrap_err();
     assert!(error.to_string().contains("size"));
-    assert_eq!(probe.snapshot(0x2000_0000, 1), vec![0xFF]);
+    assert_eq!(probe.snapshot(0x2000_0000, 1), vec![NO_WRITE_SENTINEL]);
 }
 
 #[test]
@@ -1246,5 +1259,136 @@ fn read_param_rejects_oversized_response_before_shifting() {
     let transport = NullTransport::with_responses(vec![reply]);
     let c = MCClient::new(transport, ModelId::Mc707.value());
     let error = c.read_param(0x3000_0000, 8).unwrap_err();
-    assert!(error.to_string().contains("response size"));
+    assert!(error.to_string().contains("DT1 payload length mismatch"));
+}
+
+#[test]
+fn client_read_rejects_mismatched_dt1_address_model_and_length() {
+    let requested_address = 0x2000_0000;
+    let cases = [
+        (ModelId::Mc707.value(), 0x2000_0100, vec![0x01, 0x02], 2),
+        (
+            ModelId::Mc101.value(),
+            requested_address,
+            vec![0x01, 0x02],
+            2,
+        ),
+        (ModelId::Mc707.value(), requested_address, vec![0x01], 2),
+        (
+            ModelId::Mc707.value(),
+            requested_address,
+            vec![0x01, 0x02, 0x03],
+            2,
+        ),
+    ];
+    for (reply_model, reply_address, data, count) in cases {
+        let reply = build_dt1(reply_model, reply_address, &data).unwrap();
+        let transport = NullTransport::with_responses(vec![reply]);
+        let c = MCClient::new(transport, ModelId::Mc707.value());
+        assert!(c.read(requested_address, count).is_err());
+    }
+}
+
+#[test]
+fn client_read_returns_empty_for_missing_reply() {
+    let c = MCClient::new(NullTransport::new(), ModelId::Mc707.value());
+    assert!(c.read(0x2000_0000, 1).unwrap().is_empty());
+}
+
+#[test]
+fn read_chunked_rejects_missing_and_short_replies() {
+    let missing = MCClient::new(NullTransport::new(), ModelId::Mc707.value());
+    assert!(missing.read_chunked(0x2000_0000, 128).is_err());
+
+    let reply = build_dt1(ModelId::Mc707.value(), 0x2000_0000, &[0x01; 127]).unwrap();
+    let transport = NullTransport::with_responses(vec![reply]);
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    assert!(c.read_chunked(0x2000_0000, 128).is_err());
+}
+
+#[test]
+fn read_param_size_one_preserves_full_7bit_value() {
+    let reply = build_dt1(ModelId::Mc707.value(), 0x3000_0000, &[0x46]).unwrap();
+    let transport = NullTransport::with_responses(vec![reply]);
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    assert_eq!(c.read_param(0x3000_0000, 1).unwrap(), 0x46);
+}
+
+#[test]
+fn write_param_rejects_values_that_exceed_the_requested_width() {
+    for (value, size) in [(0x80, 1), (0x100, 2), (0x1000, 3)] {
+        let transport = loopback();
+        let probe = transport.clone();
+        seed_no_write_sentinel(&probe, 0x2000_0000);
+        let c = MCClient::new(transport, ModelId::Mc707.value());
+        let error = c.write_param(0x2000_0000, value, size).unwrap_err();
+        assert!(error.to_string().contains("fit"));
+        assert_eq!(probe.snapshot(0x2000_0000, 1), vec![NO_WRITE_SENTINEL]);
+    }
+}
+
+#[test]
+fn per_track_settings_override_overlapping_system_block_bytes() {
+    let transport = loopback();
+    let probe = transport.clone();
+    let c = MCClient::new(transport, ModelId::Mc707.value());
+    let project = Project {
+        model: "MC-707".into(),
+        name: None,
+        tracks: vec![TrackDump {
+            track_number: 1,
+            settings: vec![0x55; 0x20],
+            track_tone: TonePreset::new("MC-707", None, vec![]),
+            clips: vec![],
+        }],
+        system_header: vec![],
+        system_block: vec![0x2a; 0x2000],
+    };
+    project.load_into(&c, false).unwrap();
+    assert_eq!(
+        probe.snapshot(mc_programmer::addresses::TRK_SETTINGS_BASE_ADDR[0], 0x20),
+        vec![0x55; 0x20]
+    );
+}
+
+#[test]
+fn raw_program_change_is_not_silently_supported_by_default_transport() {
+    struct NoRawTransport;
+    impl mc_programmer::Transport for NoRawTransport {
+        fn transfer(&self, _message: &[u8], _timeout: f64) -> std::result::Result<Vec<u8>, mc_programmer::Error> {
+            Ok(Vec::new())
+        }
+    }
+
+    let c = MCClient::new(NoRawTransport, ModelId::Mc707.value());
+    let error = c.select_scene(1, 1).unwrap_err();
+    assert!(error.to_string().contains("raw MIDI"));
+}
+
+#[test]
+fn invalid_utf8_files_use_the_dedicated_error_for_both_models() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("mc-programmer-invalid-utf8-{unique}.json"));
+    std::fs::write(&path, [0xff]).unwrap();
+    let path_text = path.to_str().unwrap();
+    assert!(matches!(
+        TonePreset::load(path_text),
+        Err(mc_programmer::Error::InvalidUtf8)
+    ));
+    assert!(matches!(
+        Project::load(path_text),
+        Err(mc_programmer::Error::InvalidUtf8)
+    ));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn loopback_rejects_high_bit_rq1_length_fields() {
+    let transport = loopback();
+    let mut request = mc_programmer::build_rq1(ModelId::Mc707.value(), 0x2000_0000, 1).unwrap();
+    request[15] |= 0x80;
+    assert!(mc_programmer::Transport::transfer(&transport, &request, 0.1).is_err());
 }

@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 
 use crate::addresses::add_roland_offset;
 use crate::error::{Error, Result};
-use crate::protocol::{build_dt1, ModelId};
+use crate::protocol::{build_dt1, parse_dt1_payload, roland_checksum, validate_7bit_data, ModelId};
 use crate::transport::Transport;
 
 #[derive(Default)]
@@ -44,9 +44,8 @@ pub struct LoopbackTransport {
 impl LoopbackTransport {
     /// Create an in-memory fake MC.
     ///
-    /// `unread_byte` is what reads from never-written addresses return.
-    /// Defaults to `0xFF`, which is what the real MC reports for empty
-    /// sequencer steps. Pass `0` to get raw zeroed memory.
+    /// `unread_byte` is the backing-store sentinel for never-written addresses.
+    /// `snapshot` and RQ1 reads both expose only 7-bit SysEx values.
     pub fn new(model_id: ModelId, unread_byte: u8) -> Self {
         LoopbackTransport {
             inner: Arc::new(Mutex::new(Inner {
@@ -72,7 +71,7 @@ impl LoopbackTransport {
         }
     }
 
-    /// Read back what's currently stored at an address (for assertions).
+    /// Read the 7-bit values visible to RQ1 reads (for assertions).
     pub fn snapshot(&self, address: u32, count: usize) -> Vec<u8> {
         let inner = self.inner.lock();
         (0..count)
@@ -83,6 +82,7 @@ impl LoopbackTransport {
                 address
                     .and_then(|address| inner.memory.get(&address).copied())
                     .unwrap_or(inner.unread_byte)
+                    & 0x7f
             })
             .collect()
     }
@@ -110,7 +110,7 @@ impl LoopbackTransport {
 /// Recognize a six-byte universal device inquiry regardless of device ID.
 fn is_identity_request(msg: &[u8]) -> bool {
     // F0 7E <dev> 06 01 F7
-    msg.len() == 6 && msg[0] == 0xF0 && msg[1] == 0x7E && msg[3] == 0x06 && msg[4] == 0x01 && msg[5] == 0xF7
+    msg.len() == 6 && msg[0] == 0xf0 && msg[1] == 0x7e && msg[3] == 0x06 && msg[4] == 0x01 && msg[5] == 0xf7
 }
 
 impl Transport for LoopbackTransport {
@@ -122,11 +122,11 @@ impl Transport for LoopbackTransport {
             let model_id = self.inner.lock().model_id;
             // MCClient.detect_model_id reads index 6 of the reply.
             return Ok(vec![
-                0xF0, 0x7E, 0x7F, 0x06, 0x02, 0x41, model_id, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF7,
+                0xf0, 0x7e, 0x7f, 0x06, 0x02, 0x41, model_id, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf7,
             ]);
         }
 
-        if message.len() < 14 || message[0] != 0xF0 || message[message.len() - 1] != 0xF7 || message[1] != 0x41 {
+        if message.len() < 14 || message[0] != 0xf0 || message[message.len() - 1] != 0xf7 || message[1] != 0x41 {
             return Ok(Vec::new());
         }
 
@@ -138,19 +138,30 @@ impl Transport for LoopbackTransport {
 
         match cmd {
             0x12 => {
-                // DT1 — store the payload (bytes between addr and checksum).
-                let payload = &message[12..message.len() - 2];
+                // DT1 — validate the complete packet before mutating memory.
+                let dt1 = parse_dt1_payload(message)?;
                 let mut inner = self.inner.lock();
-                for (i, &b) in payload.iter().enumerate() {
+                for (i, &b) in dt1.data.iter().enumerate() {
                     let offset =
                         u32::try_from(i).map_err(|_| Error::Value("MIDI payload offset exceeds u32".to_string()))?;
-                    inner.memory.insert(add_roland_offset(address, offset)?, b);
+                    inner
+                        .memory
+                        .insert(add_roland_offset(dt1.address, offset)?, b);
                 }
                 Ok(Vec::new())
             }
-            0x11 if message.len() < 18 => Ok(Vec::new()),
             0x11 => {
-                // RQ1 — synthesise a DT1 reply from the store.
+                if message.len() != 18 {
+                    return Err(Error::Value(format!(
+                        "RQ1 message has {} bytes; expected 18",
+                        message.len()
+                    )));
+                }
+                validate_7bit_data(&message[1..message.len() - 1], "RQ1 message")?;
+                if message[message.len() - 2] != roland_checksum(&message[8..message.len() - 2]) {
+                    return Err(Error::Value("RQ1 checksum mismatch".to_string()));
+                }
+                // RQ1 — synthesize a DT1 reply only after validating fields.
                 let count = ((message[12] as u32) << 21)
                     | ((message[13] as u32) << 14)
                     | ((message[14] as u32) << 7)
@@ -162,7 +173,7 @@ impl Transport for LoopbackTransport {
                             .ok()
                             .and_then(|address| inner.memory.get(&address).copied())
                             .unwrap_or(inner.unread_byte)
-                            & 0x7F
+                            & 0x7f
                     })
                     .collect();
                 Ok(build_dt1(inner.model_id, address, &data)?)
@@ -179,10 +190,10 @@ impl Transport for LoopbackTransport {
         if message.is_empty() {
             return Ok(());
         }
-        let status = message[0] & 0xF0;
-        let channel = (message[0] & 0x0F) + 1;
-        if status == 0xC0 && message.len() >= 2 {
-            let program = (message[1] & 0x7F) + 1;
+        let status = message[0] & 0xf0;
+        let channel = (message[0] & 0x0f) + 1;
+        if status == 0xc0 && message.len() >= 2 {
+            let program = (message[1] & 0x7f) + 1;
             inner.active_scene = Some(program);
             inner.active_clip_per_channel.insert(channel, program);
         }
@@ -194,6 +205,6 @@ impl Transport for LoopbackTransport {
 impl Default for LoopbackTransport {
     /// Create an MC-707 loopback device with `0xFF` in unwritten memory.
     fn default() -> Self {
-        Self::new(ModelId::Mc707, 0xFF)
+        Self::new(ModelId::Mc707, 0xff)
     }
 }

@@ -242,7 +242,7 @@ impl TonePreset {
 
     /// Read and parse a tone preset file, propagating I/O and JSON errors.
     pub fn load(path: &str) -> Result<Self> {
-        let raw = fs::read_to_string(path)?;
+        let raw = String::from_utf8(fs::read(path)?)?;
         Self::from_json(&raw)
     }
 }
@@ -327,7 +327,7 @@ pub fn tone_region_specs() -> Vec<ToneRegionSpec> {
         push(
             &mut out,
             &format!("partial_amp_env_{n}"),
-            0x2C00 + (n - 1) as u32 * 0x100,
+            0x2c00 + (n - 1) as u32 * 0x100,
             "PARTIAL_AMP_ENV",
         );
     }
@@ -349,13 +349,13 @@ pub fn tone_region_specs() -> Vec<ToneRegionSpec> {
         );
     }
 
-    push(&mut out, "tone_synth_common", 0x3C00, "TONE_SYNTH_COMMON");
-    push(&mut out, "tone_synth_pmt", 0x3D00, "TONE_SYNTH_PMT");
+    push(&mut out, "tone_synth_common", 0x3c00, "TONE_SYNTH_COMMON");
+    push(&mut out, "tone_synth_pmt", 0x3d00, "TONE_SYNTH_PMT");
     for n in 1..=4usize {
         push(
             &mut out,
             &format!("tone_synth_partial_{n}"),
-            0x3E00 + (n - 1) as u32 * 0x100,
+            0x3e00 + (n - 1) as u32 * 0x100,
             "TONE_SYNTH_PARTIAL",
         );
     }

@@ -17,24 +17,29 @@ cargo run --example four_on_the_floor
 The default build has no hardware MIDI dependency. Enable the optional
 cross-platform `midir` backend with `--features midir` when connecting to a
 physical device.
+On Linux, `cargo test --all-features` also requires ALSA development files
+(for example, `libasound2-dev` on Debian/Ubuntu); plain `cargo test` uses the
+default feature set and does not require a hardware MIDI backend.
 
 ## Quick start
 
 ```rust
 use mc_programmer::{LoopbackTransport, MCClient, ModelId, Pitch};
 
-let client = MCClient::new(
-    LoopbackTransport::new(ModelId::Mc707, 0xFF),
-    ModelId::Mc707.value(),
-);
-client.set_pattern(
-    1,
-    1,
-    &[(Pitch::from("C1"), vec![1, 5, 9, 13])],
-    100,
-    true,
-)?;
-# Ok::<(), mc_programmer::Error>(())
+fn main() -> Result<(), mc_programmer::Error> {
+    let client = MCClient::new(
+        LoopbackTransport::new(ModelId::Mc707, 0xFF),
+        ModelId::Mc707.value(),
+    );
+    client.set_pattern(
+        1,
+        1,
+        &[(Pitch::from("C1"), vec![1, 5, 9, 13])],
+        100,
+        true,
+    )?;
+    Ok(())
+}
 ```
 
 For hardware, construct `MidirTransport::connect("MC-707")?` and pass it to

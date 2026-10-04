@@ -87,7 +87,7 @@ echo "  OK — no copyrighted files in reference/"
 
 echo ""
 echo "→ Running Python tests..."
-PYTHONPATH=python_lib python3 -m unittest python_lib.tests.test_mc_programmer 2>&1 | tail -3
+PYTHONPATH=python_lib python3 -m unittest discover -s python_lib/tests 2>&1 | tail -3
 echo ""
 
 if command -v swift >/dev/null 2>&1; then
@@ -98,14 +98,19 @@ else
     echo "→ Skipping Swift tests (swift compiler not in PATH)"
     echo ""
 fi
-if command -v cargo >/dev/null 2>&1; then
-    echo "→ Running Rust tests..."
-    (cd rust_lib && cargo test --all-features 2>&1 | tail -8)
-    echo ""
-else
-    echo "→ Skipping Rust tests (cargo not in PATH)"
-    echo ""
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "✗ cargo is required to run the Rust test suite but was not found in PATH" >&2
+    exit 1
 fi
+
+echo "→ Running Rust tests..."
+if [[ "$(uname -s)" == "Linux" ]] && { ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists alsa; }; then
+    echo "  Notice: ALSA development metadata is unavailable; running Rust tests without optional features." >&2
+    (cd rust_lib && cargo test 2>&1 | tail -8)
+else
+    (cd rust_lib && cargo test --all-features 2>&1 | tail -8)
+fi
+echo ""
 
 # ---- Git status preview ----------------------------------------------------
 

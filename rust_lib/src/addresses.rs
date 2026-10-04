@@ -17,7 +17,7 @@
 use crate::error::{Error, Result};
 
 const ADDRESS_MSB_MASK: u32 = 0x8080_8080;
-const MAX_LINEAR_ADDRESS: u32 = 0x0FFF_FFFF;
+const MAX_LINEAR_ADDRESS: u32 = 0x0fff_ffff;
 
 /// Convert a four-byte Roland 7-bit address into a linear byte index.
 pub fn roland_address_to_linear(address: u32) -> Result<u32> {
@@ -26,10 +26,10 @@ pub fn roland_address_to_linear(address: u32) -> Result<u32> {
             "invalid Roland address 0x{address:08X}: every byte must be 7-bit"
         )));
     }
-    Ok(((address >> 24) & 0x7F) << 21
-        | ((address >> 16) & 0x7F) << 14
-        | ((address >> 8) & 0x7F) << 7
-        | (address & 0x7F))
+    Ok(((address >> 24) & 0x7f) << 21
+        | ((address >> 16) & 0x7f) << 14
+        | ((address >> 8) & 0x7f) << 7
+        | (address & 0x7f))
 }
 
 /// Convert a linear byte index into a four-byte Roland 7-bit address.
@@ -39,7 +39,7 @@ pub fn roland_address_from_linear(linear: u32) -> Result<u32> {
             "linear Roland address 0x{linear:X} exceeds the 28-bit address space"
         )));
     }
-    Ok(((linear >> 21) & 0x7F) << 24 | ((linear >> 14) & 0x7F) << 16 | ((linear >> 7) & 0x7F) << 8 | (linear & 0x7F))
+    Ok(((linear >> 21) & 0x7f) << 24 | ((linear >> 14) & 0x7f) << 16 | ((linear >> 7) & 0x7f) << 8 | (linear & 0x7f))
 }
 
 /// Add a linear byte count to a Roland 7-bit address.
@@ -82,7 +82,7 @@ pub const TRK_BASE_ADDR: [u32; NUM_TRACKS] = [
 
 /// Per-track settings block (color, sound source, etc.).
 pub const TRK_SETTINGS_BASE_ADDR: [u32; NUM_TRACKS] = [
-    0x10000800, 0x10000A00, 0x10000C00, 0x10000E00, 0x10001000, 0x10001200, 0x10001400, 0x10001600,
+    0x10000800, 0x10000a00, 0x10000c00, 0x10000e00, 0x10001000, 0x10001200, 0x10001400, 0x10001600,
 ];
 pub const SND_SRC_CFG_OFFS: u32 = 0x04; // 0 -> track is sound source, 1 -> clip is
 pub const TRK_COLOR_OFFS: u32 = 0x19;
@@ -94,7 +94,7 @@ pub const TRK_TYPE_OFFS: u32 = 0x14; // 0=TONE, 1=DRUM, 0x7F=OFF
 /// track tone — aligned every `0x20000` bytes.
 pub const ZENCORE_TONE_ALIGNMENT: u32 = 0x0002_0000;
 pub const ZENCORE_TRACK_BASE: [u32; NUM_TRACKS] = [
-    0x30000000, 0x30220000, 0x30440000, 0x30660000, 0x31080000, 0x312A0000, 0x314C0000, 0x316E0000,
+    0x30000000, 0x30220000, 0x30440000, 0x30660000, 0x31080000, 0x312a0000, 0x314c0000, 0x316e0000,
 ];
 
 /// Selected ZEN-Core tone offsets demonstrated in the ZC programming video.

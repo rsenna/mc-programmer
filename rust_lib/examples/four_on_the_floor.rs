@@ -11,7 +11,7 @@ use mc_programmer::{LoopbackTransport, MCClient, ModelId, NoteComponent, NoteSte
 /// Write a kick pattern to loopback memory and print the steps containing notes.
 fn main() {
     let client = MCClient::new(
-        LoopbackTransport::new(ModelId::Mc707, 0xFF),
+        LoopbackTransport::new(ModelId::Mc707, 0xff),
         ModelId::Mc707.value(),
     );
 

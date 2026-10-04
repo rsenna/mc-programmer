@@ -328,7 +328,7 @@ impl Project {
                         track.track_number, clip.clip_number, clip.step_count
                     )));
                 }
-                if clip.step_scale > 0x7F {
+                if clip.step_scale > 0x7f {
                     return Err(Error::Value(format!(
                         "project track {} clip {} step_scale={} is not a 7-bit MIDI value",
                         track.track_number, clip.clip_number, clip.step_scale
@@ -423,7 +423,7 @@ impl Project {
 
     /// Read and parse a project file, propagating I/O and JSON errors.
     pub fn load(path: &str) -> Result<Self> {
-        let raw = fs::read_to_string(path)?;
+        let raw = String::from_utf8(fs::read(path)?)?;
         Self::from_json(&raw)
     }
 
@@ -453,7 +453,7 @@ impl Project {
                 let clip_base = client.addresses.clip_base(track_idx, clip_idx)?;
 
                 let params = client.read_chunked(add_roland_address(clip_base, SEQ_PARAMS_OFFS)?, 4)?;
-                let step_scale = params.first().copied().unwrap_or(1) & 0x7F;
+                let step_scale = params.first().copied().unwrap_or(1) & 0x7f;
                 let mut step_count = if params.len() >= 3 {
                     ((params[1] as usize) << 4) | params[2] as usize
                 } else {
@@ -503,6 +503,13 @@ impl Project {
     pub fn load_into<T: Transport>(&self, client: &MCClient<T>, force: bool) -> Result<()> {
         self.validate_for_load(client, force)?;
 
+        if !self.system_header.is_empty() {
+            client.write_chunked(SYSTEM_HEADER_ADDRESS, &self.system_header)?;
+        }
+        if !self.system_block.is_empty() {
+            client.write_chunked(SYSTEM_BLOCK_ADDRESS, &self.system_block)?;
+        }
+
         for track_dump in &self.tracks {
             let track_idx = (track_dump.track_number - 1) as usize;
             client.write_chunked(TRK_SETTINGS_BASE_ADDR[track_idx], &track_dump.settings)?;
@@ -515,9 +522,9 @@ impl Project {
                 client.write_chunked(
                     add_roland_address(clip_base, SEQ_PARAMS_OFFS)?,
                     &[
-                        clip_dump.step_scale & 0x7F,
-                        (clip_dump.step_count >> 4) as u8 & 0x0F,
-                        clip_dump.step_count as u8 & 0x0F,
+                        clip_dump.step_scale & 0x7f,
+                        (clip_dump.step_count >> 4) as u8 & 0x0f,
+                        clip_dump.step_count as u8 & 0x0f,
                         0x00,
                     ],
                 )?;
@@ -547,13 +554,6 @@ impl Project {
                     force,
                 )?;
             }
-        }
-
-        if !self.system_header.is_empty() {
-            client.write_chunked(SYSTEM_HEADER_ADDRESS, &self.system_header)?;
-        }
-        if !self.system_block.is_empty() {
-            client.write_chunked(SYSTEM_BLOCK_ADDRESS, &self.system_block)?;
         }
         Ok(())
     }

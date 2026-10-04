@@ -7,7 +7,7 @@
 //! area. The first `0x10` bytes are unknown / not decoded here. After that:
 //!
 //! * offset `0x10` — 16 notes, 2 bytes/note, packed as two 4-bit nibbles
-//!   (e.g. C4 = `0x3C` → `0x03 0x0C`). An empty slot is `0x0F 0x0F`.
+//!   (e.g. C3 = `0x3C` → `0x03 0x0C`). An empty slot is `0x0F 0x0F`.
 //! * offset `0x30` — 16 velocities, 1 byte each (0..127)
 //! * offset `0x40` — 16 start times, 2 bytes each, signed cents-of-a-step
 //!   (range −50..+99). Negative values are two's-complement nibble pairs
@@ -28,7 +28,7 @@ use crate::addresses::{
 use crate::error::{Error, Result};
 
 /// Sentinel byte value used for unused note slots.
-pub const EMPTY_NOTE: u8 = 0xFF;
+pub const EMPTY_NOTE: u8 = 0xff;
 /// End-time value that ties the note into the next step.
 pub const END_TIME_TIE: u8 = 100;
 pub const VELOCITY_DEFAULT: u8 = 100;
@@ -144,6 +144,7 @@ impl NoteStep {
             .copied()
             .filter(|c| !c.is_empty())
             .collect();
+        live.truncate(NOTES_PER_STEP);
         let pad = NOTES_PER_STEP - live.len();
         live.extend(std::iter::repeat(NoteComponent::empty()).take(pad));
         self.components = live;
@@ -162,12 +163,12 @@ impl Default for NoteStep {
 
 /// Encode an unsigned byte (or signed via two's-complement) as a nibble pair.
 pub fn pack_nibble_pair(value: u8) -> (u8, u8) {
-    ((value >> 4) & 0x0F, value & 0x0F)
+    ((value >> 4) & 0x0f, value & 0x0f)
 }
 
 /// Decode a nibble pair to an unsigned byte (call [`signed_byte`] for s8).
 pub fn unpack_nibble_pair(hi: u8, lo: u8) -> u8 {
-    ((hi & 0x0F) << 4) | (lo & 0x0F)
+    ((hi & 0x0f) << 4) | (lo & 0x0f)
 }
 
 /// Interpret an 8-bit value as two's-complement signed (-128..127).
@@ -187,20 +188,25 @@ pub fn to_signed_byte(v: i8) -> u8 {
 pub fn encode_note_step(step: &NoteStep) -> Vec<u8> {
     let mut buf = vec![0u8; STEP_SIZE as usize];
 
-    for (i, comp) in step.components.iter().enumerate() {
+    for i in 0..NOTES_PER_STEP {
+        let comp = step
+            .components
+            .get(i)
+            .copied()
+            .unwrap_or_else(NoteComponent::empty);
         // notes (nibble-packed) at NOTES_OFFS
         let nb = NOTES_OFFS as usize + i * 2;
         if comp.is_empty() {
-            buf[nb] = 0x0F;
-            buf[nb + 1] = 0x0F;
+            buf[nb] = 0x0f;
+            buf[nb + 1] = 0x0f;
         } else {
-            let (hi, lo) = pack_nibble_pair(comp.note & 0x7F);
+            let (hi, lo) = pack_nibble_pair(comp.note & 0x7f);
             buf[nb] = hi;
             buf[nb + 1] = lo;
         }
 
         // velocity (clamped to 0..127)
-        buf[VELOCITY_OFFS as usize + i] = comp.velocity & 0x7F;
+        buf[VELOCITY_OFFS as usize + i] = comp.velocity & 0x7f;
 
         // signed start cents — two's-complement nibble pair
         let sb = START_OFFS as usize + i * 2;
@@ -212,7 +218,7 @@ pub fn encode_note_step(step: &NoteStep) -> Vec<u8> {
         buf[END_OFFS as usize + i] = comp.end_cents.min(END_TIME_TIE);
     }
 
-    buf[SUBSTEP_OFFS as usize] = step.substep as u8 & 0x7F;
+    buf[SUBSTEP_OFFS as usize] = step.substep as u8 & 0x7f;
     buf
 }
 
@@ -231,7 +237,7 @@ pub fn decode_note_step(raw: &[u8]) -> Result<NoteStep> {
         let nb = NOTES_OFFS as usize + i * 2;
         let note_byte = unpack_nibble_pair(raw[nb], raw[nb + 1]);
 
-        let vel = raw[VELOCITY_OFFS as usize + i] & 0x7F;
+        let vel = raw[VELOCITY_OFFS as usize + i] & 0x7f;
 
         let sb = START_OFFS as usize + i * 2;
         let start_byte = unpack_nibble_pair(raw[sb], raw[sb + 1]);
@@ -252,7 +258,7 @@ pub fn decode_note_step(raw: &[u8]) -> Result<NoteStep> {
         });
     }
 
-    let substep = SubStep::from_u8(raw[SUBSTEP_OFFS as usize] & 0x7F);
+    let substep = SubStep::from_u8(raw[SUBSTEP_OFFS as usize] & 0x7f);
     Ok(NoteStep {
         components,
         substep,
@@ -329,8 +335,8 @@ mod tests {
     fn empty_slot_round_trips() {
         let step = NoteStep::default();
         let raw = encode_note_step(&step);
-        assert_eq!(raw[NOTES_OFFS as usize], 0x0F);
-        assert_eq!(raw[NOTES_OFFS as usize + 1], 0x0F);
+        assert_eq!(raw[NOTES_OFFS as usize], 0x0f);
+        assert_eq!(raw[NOTES_OFFS as usize + 1], 0x0f);
         assert_eq!(decode_note_step(&raw).unwrap(), step);
     }
 
@@ -342,11 +348,59 @@ mod tests {
         step.components[0].start_cents = -10;
         let raw = encode_note_step(&step);
         // -10 → 0xF6 → nibbles 0x0F 0x06
-        assert_eq!(raw[START_OFFS as usize], 0x0F);
+        assert_eq!(raw[START_OFFS as usize], 0x0f);
         assert_eq!(raw[START_OFFS as usize + 1], 0x06);
         assert_eq!(
             decode_note_step(&raw).unwrap().components[0].start_cents,
             -10
         );
+    }
+
+    #[test]
+    fn encoder_normalizes_short_and_long_public_component_vectors() {
+        let first = NoteComponent {
+            note: 60,
+            velocity: 88,
+            start_cents: -2,
+            end_cents: 80,
+            processed: false,
+        };
+        let sparse = NoteStep {
+            components: vec![first],
+            substep: SubStep::None,
+        };
+        let decoded = decode_note_step(&encode_note_step(&sparse)).unwrap();
+        assert_eq!(decoded.components[0], first);
+        assert!(decoded.components[1..]
+            .iter()
+            .all(|component| *component == NoteComponent::empty()));
+
+        let oversized = NoteStep {
+            components: vec![NoteComponent::empty(); NOTES_PER_STEP + 1],
+            substep: SubStep::None,
+        };
+        assert_eq!(
+            encode_note_step(&oversized),
+            encode_note_step(&NoteStep::default())
+        );
+    }
+
+    #[test]
+    fn compact_truncates_excess_live_components() {
+        let mut step = NoteStep {
+            components: vec![
+                NoteComponent {
+                    note: 60,
+                    velocity: 100,
+                    start_cents: 0,
+                    end_cents: 80,
+                    processed: false,
+                };
+                NOTES_PER_STEP + 1
+            ],
+            substep: SubStep::None,
+        };
+        step.compact();
+        assert_eq!(step.components.len(), NOTES_PER_STEP);
     }
 }

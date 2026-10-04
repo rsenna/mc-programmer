@@ -21,8 +21,9 @@ preview card.
 > MC-707 and MV-1 grooveboxes over MIDI System Exclusive — sequencer,
 > ZEN-Core synth parameters, scenes, clips, and full project save/restore.**
 
-*279 chars. Says exactly what it is, what platforms it covers, what
+*209 chars. Says exactly what it is, what platforms it covers, what
 hardware it targets, and what it can do. Won't get cut off anywhere.*
+
 
 ### Slightly punchier alternative
 
@@ -32,7 +33,7 @@ hardware it targets, and what it can do. Won't get cut off anywhere.*
 > over MIDI Sys-Ex.**
 
 *Calls out the pain point musicians actually feel ("menu-diving") and
-gives a concrete number for the parameter coverage. ~280 chars.*
+gives a concrete number for the parameter coverage. 225 chars.*
 
 ---
 
@@ -44,7 +45,7 @@ the README, or anywhere a single concise sentence is wanted.
 > **Code-driven sound design and pattern programming for the Roland MC
 > family.**
 
-*72 chars. The shortest variant that still tells the reader what the
+*74 chars. The shortest variant that still tells the reader what the
 project does and which hardware it targets.*
 
 ---
@@ -76,7 +77,7 @@ For Mastodon, Bluesky, Hacker News title, link-roundup blog, etc.
 > Sys-Ex toolkit Roland never shipped for the MC-101 and MC-707.
 > Python, Swift, and Rust; MIT-licensed; no menu diving.
 
-*~170 chars. Fits in a Mastodon post or HN title with room for a link.
+*176 chars. Fits in a Mastodon post or HN title with room for a link.
 The "Roland never shipped" framing positions it clearly against the
 PG-200 / PG-800 hardware programmer precedent.*
 
