@@ -584,7 +584,7 @@ impl<T: Transport> MCClient<T> {
     pub const CHUNK_SIZE: usize = 0x80;
 
     /// Read a block in requests of at most [`Self::CHUNK_SIZE`] bytes.
-    /// Advance using Roland address arithmetic and replace empty replies with zeroes.
+    /// Reject any chunk reply whose length differs from the requested size.
     pub fn read_chunked(&self, address: u32, count: usize) -> Result<Vec<u8>> {
         let mut out = Vec::with_capacity(count);
         let mut offset = 0usize;
