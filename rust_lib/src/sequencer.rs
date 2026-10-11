@@ -265,6 +265,76 @@ pub fn decode_note_step(raw: &[u8]) -> Result<NoteStep> {
     })
 }
 
+/// Render a raw note-step record as a hex dump followed by decoded note lanes.
+///
+/// The record must contain exactly STEP_SIZE bytes. The raw dump includes
+/// unknown bytes so the formatter remains useful for protocol debugging.
+pub fn format_note_step(raw: &[u8]) -> Result<String> {
+    use std::fmt::Write as _;
+
+    let expected = STEP_SIZE as usize;
+    if raw.len() != expected {
+        return Err(Error::Value(format!(
+            "step record must be exactly {expected} bytes, got {}",
+            raw.len()
+        )));
+    }
+
+    let step = decode_note_step(raw)?;
+    let mut output = String::with_capacity(2400);
+    writeln!(output, "MC note step ({expected} bytes)").unwrap();
+    for (row, chunk) in raw.chunks(16).enumerate() {
+        write!(output, "{:04X}: ", row * 16).unwrap();
+        for (column, byte) in chunk.iter().enumerate() {
+            if column != 0 {
+                output.push(' ');
+            }
+            write!(output, "{byte:02X}").unwrap();
+        }
+        output.push('\n');
+    }
+
+    output.push_str("Decoded lanes:\n");
+    for (lane, component) in step.components.iter().enumerate() {
+        write!(output, "{lane:02}: note=").unwrap();
+        if component.is_empty() {
+            output.push_str("empty");
+        } else if let Ok(name) = crate::notes::note_name(component.note) {
+            write!(output, "{name} ({})", component.note).unwrap();
+        } else {
+            write!(output, "invalid 0x{:02X}", component.note).unwrap();
+        }
+
+        write!(
+            output,
+            ", velocity={}, start={:+}c, end=",
+            component.velocity, component.start_cents
+        )
+        .unwrap();
+        if component.ties_to_next() {
+            output.push_str("tie");
+        } else {
+            write!(output, "{}c", component.end_cents).unwrap();
+        }
+        output.push('\n');
+    }
+
+    let substep = match step.substep {
+        SubStep::None => "none",
+        SubStep::Double => "double",
+        SubStep::Triple => "triple",
+        SubStep::Quadruple => "quadruple",
+        SubStep::Flam => "flam",
+    };
+    write!(
+        output,
+        "Substep: {substep} (raw 0x{:02X})",
+        raw[SUBSTEP_OFFS as usize]
+    )
+    .unwrap();
+    Ok(output)
+}
+
 // --- Motion lanes -----------------------------------------------------------
 
 /// A motion-step record holds up to 8 lanes (C1..C4 + 4 extras).

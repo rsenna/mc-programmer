@@ -44,6 +44,38 @@ final class MCProgrammerTests: XCTestCase {
         XCTAssertTrue(decoded.components[2].isEmpty)
     }
 
+    func testNoteStepFormattingShowsHexAndDecodedLanes() throws {
+        var raw = NoteStepCodec.encode(NoteStep())
+        raw[0x10] = 0x03
+        raw[0x11] = 0x0C
+        raw[0x12] = 0x08
+        raw[0x13] = 0x00
+        raw[0x30] = 123
+        raw[0x31] = 100
+        raw[0x40] = 0x0F
+        raw[0x41] = 0x06
+        raw[0x60] = 100
+        raw[0x61] = 56
+        raw[0x70] = 2
+        raw[255] = 0xA5
+
+        let rendered = try NoteStepCodec.format(raw)
+
+        XCTAssertTrue(rendered.contains("0000: " + Array(repeating: "00", count: 16).joined(separator: " ")))
+        XCTAssertTrue(rendered.contains("0010: 03 0C 08 00"))
+        XCTAssertTrue(rendered.contains("00F0: " + (Array(repeating: "00", count: 15) + ["A5"]).joined(separator: " ")))
+        XCTAssertTrue(rendered.contains("00: note=C3 (60), velocity=123, start=-10c, end=tie"))
+        XCTAssertTrue(rendered.contains("01: note=invalid 0x80, velocity=100, start=+0c, end=56c"))
+        XCTAssertTrue(rendered.contains("02: note=empty, velocity=100, start=+0c, end=80c"))
+        XCTAssertTrue(rendered.contains("Substep: triple (raw 0x02)"))
+    }
+
+    func testNoteStepFormattingRequiresExactRecordSize() {
+        for size in [255, 257] {
+            XCTAssertThrowsError(try NoteStepCodec.format(Array(repeating: 0, count: size)))
+        }
+    }
+
     func testEmptyNoteSentinel() throws {
         let step = NoteStep()
         let encoded = NoteStepCodec.encode(step)

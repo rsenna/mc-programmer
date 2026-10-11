@@ -5,10 +5,10 @@
 //! access, tone presets and whole-project dump/restore — without hardware.
 
 use mc_programmer::{
-    build_dt1, decode_note_step, encode_note_step, lookup, note, note_name, parse_dt1_payload, partial_offset,
-    roland_checksum, substructure_offset, AddressMap, ClipDump, LoopbackTransport, MCClient, ModelId, NoteComponent,
-    NoteStep, NullTransport, ParamGroup, Pitch, Project, SubStep, TonePreset, ToneRegion, TrackDump, ZCValue,
-    EMPTY_NOTE,
+    build_dt1, decode_note_step, encode_note_step, format_note_step, lookup, note, note_name, parse_dt1_payload,
+    partial_offset, roland_checksum, substructure_offset, AddressMap, ClipDump, LoopbackTransport, MCClient, ModelId,
+    NoteComponent, NoteStep, NullTransport, ParamGroup, Pitch, Project, SubStep, TonePreset, ToneRegion, TrackDump,
+    ZCValue, EMPTY_NOTE,
 };
 
 /// Create an MC-707 memory transport whose unwritten bytes are `0xFF`.
@@ -309,6 +309,44 @@ fn synth_and_mfx_tables_present() {
     );
     assert_eq!(lookup(ParamGroup::Mfx, "type").unwrap().offset, 0x00);
     assert_eq!(lookup(ParamGroup::Mfx, "mfx_switch").unwrap().offset, 0x01);
+}
+
+#[test]
+fn note_step_formatting_shows_hex_and_decoded_lanes() {
+    let mut raw = encode_note_step(&NoteStep::default());
+    raw[0x10..0x14].copy_from_slice(&[0x03, 0x0c, 0x08, 0x00]);
+    raw[0x30..0x32].copy_from_slice(&[123, 100]);
+    raw[0x40..0x42].copy_from_slice(&[0x0f, 0x06]);
+    raw[0x60..0x62].copy_from_slice(&[100, 56]);
+    raw[0x70] = 2;
+    raw[255] = 0xa5;
+
+    let rendered = format_note_step(&raw).unwrap();
+
+    assert!(rendered.contains(&format!("0000: {}", ["00"; 16].join(" "))));
+    assert!(rendered.contains("0010: 03 0C 08 00"));
+    assert!(rendered.contains("00: note=C3 (60), velocity=123, start=-10c, end=tie"));
+    assert!(rendered.contains(&format!(
+        "00F0: {}",
+        ["00"; 15]
+            .into_iter()
+            .chain(["A5"])
+            .collect::<Vec<_>>()
+            .join(" ")
+    )));
+    assert!(rendered.contains("01: note=invalid 0x80, velocity=100, start=+0c, end=56c"));
+    assert!(rendered.contains("02: note=empty, velocity=100, start=+0c, end=80c"));
+    assert!(rendered.contains("Substep: triple (raw 0x02)"));
+}
+
+#[test]
+fn note_step_formatting_requires_exact_record_size() {
+    for size in [255, 257] {
+        assert!(format_note_step(&vec![0; size])
+            .unwrap_err()
+            .to_string()
+            .contains("exactly 256 bytes"));
+    }
 }
 
 // ---------------------------------------------------------------------------
