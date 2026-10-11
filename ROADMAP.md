@@ -215,7 +215,7 @@ address before the parameter table can be added safely.
 
 ### Quality-of-life improvements
 
-- [ ] CI: GitHub Actions workflow that runs `python -m unittest`,
+- [x] CI: GitHub Actions workflow that runs `python -m unittest`,
       `swift test`, and `cargo test --all-features` on every push
 - [ ] Publish `mc_programmer` to PyPI under a friendly version
 - [ ] Add the Swift package to the Swift Package Index
