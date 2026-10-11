@@ -1,0 +1,47 @@
+.gitignore
+  s_a282bc8fb316c0::t_6ab1e50dd31664 46-51
+CLAUDE.md
+  s_a282bc8fb316c0::t_ea614f5541011c 36,39-42,93
+README.md
+  s_a282bc8fb316c0::t_a7778d3371be1b 183
+ROADMAP.md
+  s_a282bc8fb316c0::t_4e01850d6af3ce 95-120,186-187,217-220,285-290
+docs/PROBING.md
+  s_a282bc8fb316c0::t_6f00f0080cd0e4 1-182
+rust_lib/Cargo.toml
+  s_a282bc8fb316c0::t_71a6bdb590ceef 13-20
+rust_lib/examples/raw_reply.rs
+  s_a282bc8fb316c0::t_9370a3b48ae4d4 1-48
+rust_lib/src/addresses.rs
+  s_a282bc8fb316c0::t_c48f55b3fbde5f 53-134
+rust_lib/src/bin/mc-probe.rs
+  s_a282bc8fb316c0::t_c1ea511b980601 1-424
+rust_lib/src/client.rs
+  s_a282bc8fb316c0::t_d0b3d64bf74d28 27,82-92,97-98,124-145
+rust_lib/src/lib.rs
+  s_a282bc8fb316c0::t_d675d9ea3b829b 14,38,46-49,60
+rust_lib/src/loopback.rs
+  s_a282bc8fb316c0::t_d436f150272211 18,35-37,64-76,195-213
+rust_lib/src/probe.rs
+  s_a282bc8fb316c0::t_d94bc91e4d278b 1-655
+rust_lib/tests/probe.rs
+  s_a282bc8fb316c0::t_85ecf40ac60e9c 1-597
+rust_lib/tests/reply_address.rs
+  s_a282bc8fb316c0::t_0d24653ea76a05 1-162
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e94bb816d7ce94867be91180bccab4279076dc4",
+  "prompts": {},
+  "sessions": {
+    "s_a282bc8fb316c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53115fcb-7d04-4e24-9042-b26390a40d15",
+        "model": "claude-opus-5"
+      },
+      "human_author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}

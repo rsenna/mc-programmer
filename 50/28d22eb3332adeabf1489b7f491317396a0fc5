@@ -1,0 +1,43 @@
+docs/PROBING.md
+  s_16017a6254045f::t_55ee090a33e5f0 55-79
+rust_lib/Cargo.toml
+  s_a282bc8fb316c0::t_8836f71d1079e6 21-28
+rust_lib/src/addresses.rs
+  s_a282bc8fb316c0::t_e306190b44dbc2 93-110,117-122,128-138,140-150,153-157,160
+rust_lib/src/bin/mc-probe.rs
+  s_16017a6254045f::t_fdc1747e508c17 27-31,74,158-185,199,241-247,388,391-406
+rust_lib/src/client.rs
+  s_a282bc8fb316c0::t_23eac124f4fdff 135,143-153
+rust_lib/src/loopback.rs
+  s_a282bc8fb316c0::t_cfa113c501629a 71-73,79
+rust_lib/src/probe.rs
+  s_a282bc8fb316c0::t_adfb73c45c8ede 78-83,122,160-162,173-191,231-253,293-295,337-342,345-353,359-366,371-373,378-404,406,408-414,526-528,595-606
+rust_lib/tests/probe.rs
+  s_a282bc8fb316c0::t_4506dbd2460a23 227-229,241-248,264-266,268-269,271-274,368-370,424-426,492-494,615-670
+rust_lib/tests/reply_address.rs
+  s_a282bc8fb316c0::t_9da894f1de5528 12-26,28,33,35-38,41,45,48,80,83,89,93-96,100-117,124-126,134,140,143,149-160,162-165,167-168,172-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5028d22eb3332adeabf1489b7f491317396a0fc5",
+  "prompts": {},
+  "sessions": {
+    "s_16017a6254045f": {
+      "agent_id": {
+        "tool": "github-copilot-cli",
+        "id": "23abe9f6-2d76-4480-9f88-e0097b0a8ac4",
+        "model": "auto"
+      },
+      "human_author": "owkwo-bot <agents@owkwo.org>"
+    },
+    "s_a282bc8fb316c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53115fcb-7d04-4e24-9042-b26390a40d15",
+        "model": "claude-opus-5"
+      },
+      "human_author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
