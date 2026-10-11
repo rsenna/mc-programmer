@@ -53,7 +53,7 @@ use serde_json::{json, Value};
 
 use crate::addresses::{
     resolve_reply_location, resolve_reply_location_from, roland_address_from_linear, roland_address_to_linear,
-    ReplyLocation, CANDIDATE_SPACING,
+    ReplyLocation,
 };
 use crate::client::MCClient;
 use crate::error::{Error, Result};
@@ -178,6 +178,12 @@ pub struct Snapshot {
     /// higher candidate, so nearly every answered chunk is confirmed. What it
     /// buys is a placement that is a fact rather than a guess.
     pub confirmations: usize,
+    /// Placements kept on the strength of silence from every follow-up:
+    /// consistent with a one-byte run at that address, but not proven, since
+    /// silence is also what a dropped frame or a request the device declines
+    /// looks like. Expected at the top edge of each mapped region. Treat these
+    /// addresses as probable rather than established.
+    pub unconfirmed_placements: usize,
     /// Follow-up exchanges those confirmations cost. Roughly equal to
     /// `confirmations` on a healthy sweep, so expect a range that answers to
     /// cost about twice the requests `chunks_probed` reports.
@@ -234,67 +240,83 @@ impl DiffRun {
     }
 }
 
-/// How many follow-up exchanges one ambiguous base may cost.
+/// How many rounds a confirmation climb may take before giving up.
 ///
-/// Each step rules out one candidate of the masked reply, and a reply has at
-/// most 8 (see [`reply_address_candidates`](crate::addresses::reply_address_candidates)),
-/// so the climb cannot outlast this.
+/// This is a budget, **not** a proof of sufficiency. Each round resolves a
+/// *different* reply with its own candidate set — the device relocates forward
+/// to the next mapped run — so the climb walks up one mapped run per round and
+/// a sparse region can need more rounds than this. Exhaustion is reported as
+/// such rather than silently accepted, because a different `--start` or
+/// `chunk` starts the climb elsewhere and may resolve what this one could not.
 const MAX_CONFIRMATION_STEPS: usize = 8;
+
+/// What a confirmation climb established about a base address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Confirmation {
+    /// A follow-up reply positively identified this address.
+    Confirmed(u32),
+    /// Every follow-up went silent. That is *consistent* with the run being
+    /// the single byte at this address — had it started further on, that run
+    /// is mapped above the follow-up and the device would have answered — but
+    /// it is not proof: [`MCClient::read_dt1`] also reports silence for a
+    /// dropped frame, interleaved traffic, a busy device, or a request the
+    /// device declines, and the MC in particular largely ignores single-byte
+    /// requests. The bytes are worth keeping; the certainty is not.
+    Unconfirmed(u32),
+    /// Nothing could be established. `exhausted` distinguishes "ran out of
+    /// rounds" (a different sweep may do better) from "a reply could not be
+    /// resolved at all" (it cannot).
+    Unresolved { exhausted: bool },
+}
 
 /// Settle an ambiguous base by asking again from just above it.
 ///
-/// Asking from `base + 1` drops `base` out of the candidate set, which is what
-/// breaks the collapse. Three outcomes, all decisive:
+/// Asking from `candidate + 1` drops `candidate` out of the candidate set,
+/// which is what breaks the collapse described in
+/// [`resolve_reply_location`](crate::addresses::resolve_reply_location):
 ///
-/// * **Silence.** Nothing is mapped at or after `base + 1`. Had the run really
-///   started further on, that run is mapped and lies above `base + 1`, so the
-///   device would have answered with it. So the run is the single byte at
-///   `base` — silence *confirms* `base` rather than leaving it unknown.
-/// * **Answers `base + 1`.** The byte above `base` is mapped too, so the run
-///   genuinely starts at `base`.
-/// * **Answers higher.** That address is the next candidate up, but it may
-///   still be a collapse of a higher one, so the test repeats from there. Each
-///   round eliminates one candidate, so it terminates in at most
-///   [`MAX_CONFIRMATION_STEPS`].
-///
-/// Returns the confirmed linear base and how many exchanges it took, or `None`
-/// if a reply could not be resolved at all.
+/// * **Answers `candidate + 1`.** The byte above is mapped too, so the run
+///   genuinely starts at `candidate` — [`Confirmation::Confirmed`].
+/// * **Answers higher.** That is the next mapped run, which may itself be a
+///   collapse, so the test repeats from there.
+/// * **Silence.** Consistent with a one-byte run at `candidate`, but not
+///   proof — [`Confirmation::Unconfirmed`].
 fn confirm_base<T: Transport>(
     client: &MCClient<T>,
     base: u32,
     count: u32,
     timeout: f64,
-) -> Result<Option<(u32, usize)>> {
+) -> Result<(Confirmation, usize)> {
     let mut candidate = base;
     let mut exchanges = 0usize;
 
     for _ in 0..MAX_CONFIRMATION_STEPS {
         let probe_linear = candidate.saturating_add(1);
         let Ok(address) = roland_address_from_linear(probe_linear) else {
-            // `candidate` is the last byte of the address space, so there is
-            // nothing above it to test against and nothing above it to be
-            // confused with.
-            return Ok(Some((candidate, exchanges)));
+            // `candidate` is the last byte of the address space: there is
+            // nothing above it to test against, and nothing above it to be
+            // confused with, so this one IS forced.
+            return Ok((Confirmation::Confirmed(candidate), exchanges));
         };
 
         exchanges += 1;
         let Some(reply) = client.read_dt1(address, count, timeout)? else {
-            return Ok(Some((candidate, exchanges)));
+            return Ok((Confirmation::Unconfirmed(candidate), exchanges));
         };
 
         match resolve_reply_location_from(reply.address, probe_linear) {
             ReplyLocation::Resolved { linear, .. } if linear == probe_linear => {
-                return Ok(Some((candidate, exchanges)))
+                return Ok((Confirmation::Confirmed(candidate), exchanges))
             }
             ReplyLocation::Resolved { linear, .. } => candidate = linear,
-            _ => return Ok(None),
+            _ => return Ok((Confirmation::Unresolved { exhausted: false }, exchanges)),
         }
     }
 
-    Ok(None)
+    Ok((Confirmation::Unresolved { exhausted: true }, exchanges))
 }
 
-/// Record a failure, keeping at most/// Record a failure, keeping at most [`MAX_RECORDED_FAILURES`] of them.
+/// Record a failure, keeping at most [`MAX_RECORDED_FAILURES`] of them.
 fn record_failure(snapshot: &mut Snapshot, address: u32, message: String) {
     if snapshot.failures.len() < MAX_RECORDED_FAILURES {
         snapshot.failures.push((address, message));
@@ -370,6 +392,7 @@ pub fn walk_with_progress<T: Transport>(
         unprovable_placements: 0,
         confirmations: 0,
         confirmation_exchanges: 0,
+        unconfirmed_placements: 0,
     };
 
     // Work stack of (linear start, byte count) still to resolve. A short
@@ -426,12 +449,10 @@ pub fn walk_with_progress<T: Transport>(
         // Where does this payload actually live? The reply reports the data's
         // linear address with every byte masked to 7 bits, so the request has
         // to disambiguate it.
-        let (base, relocated, provable) = match resolve_reply_location(message.address, start_linear) {
+        let (base, provable) = match resolve_reply_location(message.address, start_linear) {
             ReplyLocation::Resolved {
-                linear,
-                relocated,
-                provable,
-            } => (linear, relocated, provable),
+                linear, provable, ..
+            } => (linear, provable),
             ReplyLocation::Ambiguous(candidates) => {
                 snapshot.unplaceable_replies += 1;
                 record_failure(
@@ -471,36 +492,52 @@ pub fn walk_with_progress<T: Transport>(
         let base = if provable {
             base
         } else {
-            match confirm_base(client, base, count, opts.timeout) {
-                Ok(Some((confirmed, exchanges))) => {
+            let (outcome, exchanges) = confirm_base(client, base, count, opts.timeout)?;
+            snapshot.confirmation_exchanges += exchanges;
+            match outcome {
+                Confirmation::Confirmed(confirmed) => {
                     snapshot.confirmations += 1;
-                    snapshot.confirmation_exchanges += exchanges;
-                    if confirmed != base {
-                        snapshot.relocated_replies += 1;
-                    }
                     confirmed
                 }
-                Ok(None) | Err(_) => {
+                Confirmation::Unconfirmed(assumed) => {
+                    // Keep the bytes — dropping them loses the last byte of
+                    // every mapped region — but do not call it a fact. Silence
+                    // is also what a dropped frame looks like.
+                    snapshot.unconfirmed_placements += 1;
+                    assumed
+                }
+                Confirmation::Unresolved { exhausted } => {
                     snapshot.unprovable_placements += 1;
                     record_failure(
                         &mut snapshot,
                         address,
-                        format!(
-                            "reply address 0x{:08X} could not be confirmed; linear 0x{:08X} and \
-                             0x{:08X} are indistinguishable once masked",
-                            message.address,
-                            base,
-                            base.saturating_add(CANDIDATE_SPACING)
-                        ),
+                        if exhausted {
+                            format!(
+                                "reply address 0x{:08X}: gave up after {} confirmation rounds; a \
+                                 different --start or --chunk starts the climb elsewhere and may resolve it",
+                                message.address, MAX_CONFIRMATION_STEPS
+                            )
+                        } else {
+                            format!(
+                                "reply address 0x{:08X}: a follow-up reply could not be resolved at all",
+                                message.address
+                            )
+                        },
                     );
                     progress(address, 0);
                     continue;
                 }
             }
         };
-        if relocated {
+
+        // Count relocation once, against the address finally settled on. The
+        // `provable` path has no confirmation step, and the confirmation path
+        // may move the base, so deciding this here is the only place both
+        // agree.
+        if base != start_linear {
             snapshot.relocated_replies += 1;
         }
+
         // The device answered beyond the requested span, which means it found
         // nothing mapped inside it. Subdividing would re-ask about a range the
         // device has already answered for — 2·chunk−1 round trips to learn
@@ -658,6 +695,7 @@ impl Snapshot {
             "unprovable_placements": self.unprovable_placements,
             "confirmations": self.confirmations,
             "confirmation_exchanges": self.confirmation_exchanges,
+            "unconfirmed_placements": self.unconfirmed_placements,
             "failures": self
                 .failures
                 .iter()
@@ -735,6 +773,10 @@ impl Snapshot {
             confirmations: v.get("confirmations").and_then(Value::as_u64).unwrap_or(0) as usize,
             confirmation_exchanges: v
                 .get("confirmation_exchanges")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize,
+            unconfirmed_placements: v
+                .get("unconfirmed_placements")
                 .and_then(Value::as_u64)
                 .unwrap_or(0) as usize,
             failures: v

@@ -91,7 +91,7 @@ cargo test --all-features
 cargo run --example four_on_the_floor
 ```
 
-197 tests with all features enabled; the crate declares Rust 1.71 as its MSRV.
+200 tests with all features enabled; the crate declares Rust 1.71 as its MSRV.
 The default crate has no MIDI backend; enable the optional `midir` feature
 for CoreMIDI on macOS, ALSA on Linux, or WinMM on Windows.
 

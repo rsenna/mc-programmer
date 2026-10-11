@@ -83,8 +83,8 @@ matters by re-sweeping at a different `chunk`: requests then start at
 different addresses and compress differently.
 
 `Snapshot` reports `relocated_replies`, `subdivisions`, `confirmations`,
-`confirmation_exchanges`, `unplaceable_replies`, `unprovable_placements` and
-`truncated_placements`.
+`confirmation_exchanges`, `unconfirmed_placements`, `unplaceable_replies`,
+`unprovable_placements` and `truncated_placements`.
 
 ## Address arithmetic, and why ranges look odd
 

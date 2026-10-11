@@ -175,10 +175,18 @@ fn cmd_dump(args: &[String]) -> Result<(), String> {
     }
     if snapshot.unprovable_placements > 0 {
         eprintln!(
-            "warning: {} reply/replies could not be confirmed and were DISCARDED, so this \
-             sweep has holes. Re-sweeping will not change it — the masking is genuinely \
-             ambiguous there; treat those addresses as unknown.",
+            "warning: {} reply/replies could not be placed and were DISCARDED, so this sweep \
+             has holes. The per-address notes below say which were protocol dead ends and \
+             which ran out of confirmation rounds — the latter may resolve from a different \
+             --start or --chunk.",
             snapshot.unprovable_placements
+        );
+    }
+    if snapshot.unconfirmed_placements > 0 {
+        eprintln!(
+            "note: {} placement(s) rest on silence from every follow-up — probable, not \
+             established. Expected at the top edge of each mapped region.",
+            snapshot.unconfirmed_placements
         );
     }
     if snapshot.unplaceable_replies > 0 {

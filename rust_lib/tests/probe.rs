@@ -239,6 +239,7 @@ fn failures_round_trip_through_json() {
         unprovable_placements: 0,
         confirmations: 0,
         confirmation_exchanges: 0,
+        unconfirmed_placements: 0,
     };
     snapshot.bytes.insert(0x20000000, 0x7f);
 
@@ -380,6 +381,7 @@ fn diff_reports_addresses_present_on_only_one_side() {
         unprovable_placements: 0,
         confirmations: 0,
         confirmation_exchanges: 0,
+        unconfirmed_placements: 0,
     };
     before.bytes.insert(0x20000000, 0xaa);
 
@@ -437,6 +439,7 @@ fn diff_runs_join_across_the_packed_address_discontinuity() {
         unprovable_placements: 0,
         confirmations: 0,
         confirmation_exchanges: 0,
+        unconfirmed_placements: 0,
     };
     before.bytes.insert(0x2000007f, 0x00);
     before.bytes.insert(0x20000100, 0x00);
@@ -506,6 +509,7 @@ fn runs_collapse_contiguous_bytes_and_split_at_gaps() {
         unprovable_placements: 0,
         confirmations: 0,
         confirmation_exchanges: 0,
+        unconfirmed_placements: 0,
     };
     snapshot.bytes.insert(0x20000000, 1);
     snapshot.bytes.insert(0x20000001, 2);
@@ -897,5 +901,145 @@ fn confirmation_exchanges_are_counted_so_real_traffic_is_visible() {
     assert!(
         snapshot.confirmation_exchanges >= snapshot.confirmations,
         "each confirmation costs at least one exchange"
+    );
+}
+
+#[test]
+fn a_dropped_follow_up_frame_does_not_fabricate_an_address() {
+    // The failure the silence rule must not cause. `read_dt1` reports silence
+    // for ANY empty reply — a dropped frame, interleaved traffic, a busy
+    // device — not only for unmapped space. Treating it as proof placed real
+    // bytes 0x80 below where they live and counted them as confirmed, with
+    // nothing in the snapshot flagging it. A visible gap is recoverable; a
+    // mis-addressed byte is not.
+    //
+    // Device: 4 bytes mapped at linear 0x04000080 (packed 0x20000100), nothing
+    // else — and it drops the reply to every follow-up.
+    struct DropsFollowUps {
+        first: u32,
+    }
+    impl mc_programmer::Transport for DropsFollowUps {
+        fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+            let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+            // A follow-up always asks from an address strictly inside or above
+            // the mapped run; drop exactly those.
+            if base > self.first {
+                return Ok(Vec::new());
+            }
+            let start = base.max(self.first);
+            let data: Vec<u8> = (0..4).map(|i| 0x50 + i as u8).collect();
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), start & 0x7f7f_7f7f, &data).unwrap())
+        }
+    }
+
+    let client = MCClient::new(
+        DropsFollowUps { first: 0x0400_0080 },
+        ModelId::Mc101.value(),
+    );
+    let snapshot = probe::walk(
+        &client,
+        0x20000000,
+        0x20000110,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    // Whatever else happens, nothing may be recorded below the mapped run and
+    // presented as certain.
+    for &address in snapshot.bytes.keys() {
+        let linear = mc_programmer::addresses::roland_address_to_linear(address).unwrap();
+        assert!(
+            linear >= 0x0400_0080,
+            "byte recorded at linear 0x{linear:X}, below the only mapped run"
+        );
+    }
+    // And any placement resting on silence must say so rather than counting
+    // itself among the confirmations.
+    assert!(
+        snapshot.unconfirmed_placements > 0 || snapshot.bytes.is_empty(),
+        "a placement resting on silence must be reported as unconfirmed"
+    );
+}
+
+#[test]
+fn a_climb_of_more_than_one_round_is_exercised() {
+    // The bounded climb is the mechanism; a single-step version passed the
+    // whole suite before this test existed. A run starting two candidates
+    // above the request forces two rounds.
+    const BASE: u32 = 0x0400_0000;
+    let client = MCClient::new(
+        MapsRange {
+            first: BASE + 0x81,
+            last_exclusive: BASE + 0x90,
+        },
+        ModelId::Mc101.value(),
+    );
+
+    let snapshot = probe::walk(
+        &client,
+        0x20000000,
+        0x20000110,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    // Asserting only that exchanges exceed confirmations would also hold when
+    // the climb gives up, so require the bytes to actually land: reaching them
+    // needs a second round, and a one-round climb exhausts and discards them.
+    assert!(
+        snapshot.confirmations > 0,
+        "the climb must settle, not exhaust"
+    );
+    assert_eq!(
+        snapshot.unprovable_placements, 0,
+        "nothing should be given up on"
+    );
+    assert!(
+        !snapshot.bytes.is_empty(),
+        "the mapped run must be recorded"
+    );
+    assert!(
+        snapshot.confirmation_exchanges > snapshot.confirmations,
+        "a multi-round climb costs more exchanges than confirmations: {} vs {}",
+        snapshot.confirmation_exchanges,
+        snapshot.confirmations
+    );
+    for &address in snapshot.bytes.keys() {
+        let linear = mc_programmer::addresses::roland_address_to_linear(address).unwrap();
+        assert!(
+            linear >= BASE + 0x81,
+            "byte at linear 0x{linear:X} is below the run"
+        );
+    }
+}
+
+#[test]
+fn relocation_is_counted_once_per_reply() {
+    // `relocated_replies` is a per-reply reliability signal, so it must never
+    // exceed the number of replies — it was incremented both in the confirm
+    // arm and in the arm below it.
+    const BASE: u32 = 0x0400_0000;
+    let client = MCClient::new(
+        MapsRange {
+            first: BASE + 0x81,
+            last_exclusive: BASE + 0x85,
+        },
+        ModelId::Mc101.value(),
+    );
+
+    let snapshot = probe::walk(
+        &client,
+        0x20000000,
+        0x20000110,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    assert!(
+        snapshot.relocated_replies <= snapshot.chunks_answered,
+        "{} relocations reported for {} replies",
+        snapshot.relocated_replies,
+        snapshot.chunks_answered
     );
 }
