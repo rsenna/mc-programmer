@@ -104,8 +104,10 @@ sub-block. Both are now in the framework:
       MC gap-compresses a partly-mapped span, so byte *i* of a short payload
       is not byte *i* of the range
 - [x] `probe::Snapshot` — sparse address → byte record with JSON save/load,
-      hex dump and CSV export, plus `relocated_replies`, `subdivisions` and
-      `unplaceable_replies` so a sweep reports its own reliability
+      hex dump and CSV export, plus `relocated_replies`, `subdivisions`,
+      `confirmations`, `confirmation_exchanges`, `unplaceable_replies`,
+      `unprovable_placements` and `truncated_placements`, so a sweep reports
+      its own reliability
 - [x] `probe::diff` / `diff_runs` / `format_diff` — byte-level diff of two
       snapshots, grouped into contiguous runs (one run per changed field)
 - [x] `MCClient::read_with_timeout` / `read_dt1`
@@ -191,8 +193,7 @@ Rust only so far — the Python and Swift ports do not have it yet.
 - [x] Swift: 44 tests via XCTest, all passing; full suite runs in ~8 seconds
       (the file round-trip uses a compact fixture; the full dump/restore
       integration path remains covered)
-- [x] Rust: 195 tests via `cargo test --all-features`, all passing
-      (39 of them cover the address-space probe and reply-address decoding)
+- [x] Rust: 197 tests via `cargo test --all-features`, all passing
       (39 of them cover the address-space probe and reply-address decoding)
 
 ---

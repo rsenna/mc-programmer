@@ -2,8 +2,8 @@
 
 Programming tools for the **Roland MC-101**, **MC-707** and **MV-1**
 grooveboxes via MIDI System Exclusive — read and write any sequencer
-step, change ZEN-Core synth parameters, switch scenes and clips, dump
-and restore whole projects, all from your code.
+step, change ZEN-Core synth parameters, switch scenes and clips, and
+explore the device's undocumented address blocks, all from your code.
 
 Three parallel libraries that share the same data model and parameter
 table:
@@ -12,12 +12,15 @@ table:
 |---|---|---|
 | **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 76 / 76 |
 | **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 44 / 44 |
-| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 146 / 146 |
+| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 197 / 197 |
 
 All three libraries cover **~389 named ZEN-Core tone parameters** auto-generated
 from the official Jupiter-X/Xm MIDI Implementation, plus the full
-sequencer (notes + motion + pitch-bend), per-track settings, the system
-block, and full-project dump/restore. The parameter table works on the
+sequencer (notes + motion + pitch-bend), per-track settings and the system
+block. Whole-project dump/restore is implemented but **cannot currently
+complete against real hardware** — see
+[`ROADMAP.md`](ROADMAP.md) and [`docs/PROBING.md`](docs/PROBING.md). The
+parameter table works on the
 MC-101 and MC-707 unchanged (the MC-101 has 4 tracks instead of 8 — the
 high-level helpers know about this).
 
@@ -181,7 +184,7 @@ cargo test --all-features
 cargo run --example four_on_the_floor
 ```
 
-195 tests including unit, integration, feature-gated transport, and doctests.
+197 tests including unit, integration, feature-gated transport, and doctests.
 
 ### Regenerating the ZEN-Core parameter tables
 

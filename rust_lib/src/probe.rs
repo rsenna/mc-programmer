@@ -173,19 +173,18 @@ pub struct Snapshot {
     /// address, so a non-zero count means the sweep has holes — refine the
     /// range or chunk size and re-run.
     pub unplaceable_replies: usize,
-    /// Ambiguous resolutions settled by a follow-up request. Expected
-    /// wherever the device's reply address collapses onto the requested one;
-    /// each costs one extra exchange and buys a placement that is a fact
-    /// rather than a guess.
+    /// Ambiguous resolutions settled by follow-up requests. This is the
+    /// normal state, not an anomaly: a masked reply almost always has a
+    /// higher candidate, so nearly every answered chunk is confirmed. What it
+    /// buys is a placement that is a fact rather than a guess.
     pub confirmations: usize,
-    /// Replies whose address could not be proven even after a follow-up, and
-    /// whose payload was therefore **discarded** rather than placed at a
-    /// guessed address. A non-zero count means the sweep has holes. See
-    /// [`crate::addresses::resolve_reply_location`]. A second
-    /// candidate for the reply's masked address also falls within the
-    /// request's reach. The bytes are recorded as the leading hypothesis; a
-    /// non-zero count means that many of this snapshot's addresses are not
-    /// certain, and is expected to be zero on a well-behaved sweep. See
+    /// Follow-up exchanges those confirmations cost. Roughly equal to
+    /// `confirmations` on a healthy sweep, so expect a range that answers to
+    /// cost about twice the requests `chunks_probed` reports.
+    pub confirmation_exchanges: usize,
+    /// Replies whose address a follow-up could not settle, and whose payload
+    /// was therefore **discarded** rather than placed at a guessed address. A
+    /// non-zero count means the sweep has holes. See
     /// [`crate::addresses::resolve_reply_location`].
     pub unprovable_placements: usize,
     /// Payloads cut short because they ran past the end of the swept range or
@@ -235,34 +234,67 @@ impl DiffRun {
     }
 }
 
-/// Settle an ambiguous base with one follow-up request from `base + 1`.
+/// How many follow-up exchanges one ambiguous base may cost.
 ///
-/// Returns the confirmed linear base, or `None` when the follow-up produced
-/// nothing to decide on.
-fn confirm_base<T: Transport>(client: &MCClient<T>, base: u32, count: u32, timeout: f64) -> Result<Option<u32>> {
-    let probe_linear = base.saturating_add(1);
-    let Ok(address) = roland_address_from_linear(probe_linear) else {
-        return Ok(None);
-    };
-    let Some(reply) = client.read_dt1(address, count, timeout)? else {
-        return Ok(None);
-    };
-    match resolve_reply_location_from(reply.address, probe_linear) {
-        // The byte above `base` is mapped too, so the run really does start
-        // at `base`.
-        ReplyLocation::Resolved { linear, .. } if linear == probe_linear => Ok(Some(base)),
-        // Anything else is the true start, now unambiguous because `base`
-        // itself is no longer a candidate.
-        ReplyLocation::Resolved {
-            linear,
-            provable: true,
-            ..
-        } => Ok(Some(linear)),
-        _ => Ok(None),
+/// Each step rules out one candidate of the masked reply, and a reply has at
+/// most 8 (see [`reply_address_candidates`](crate::addresses::reply_address_candidates)),
+/// so the climb cannot outlast this.
+const MAX_CONFIRMATION_STEPS: usize = 8;
+
+/// Settle an ambiguous base by asking again from just above it.
+///
+/// Asking from `base + 1` drops `base` out of the candidate set, which is what
+/// breaks the collapse. Three outcomes, all decisive:
+///
+/// * **Silence.** Nothing is mapped at or after `base + 1`. Had the run really
+///   started further on, that run is mapped and lies above `base + 1`, so the
+///   device would have answered with it. So the run is the single byte at
+///   `base` — silence *confirms* `base` rather than leaving it unknown.
+/// * **Answers `base + 1`.** The byte above `base` is mapped too, so the run
+///   genuinely starts at `base`.
+/// * **Answers higher.** That address is the next candidate up, but it may
+///   still be a collapse of a higher one, so the test repeats from there. Each
+///   round eliminates one candidate, so it terminates in at most
+///   [`MAX_CONFIRMATION_STEPS`].
+///
+/// Returns the confirmed linear base and how many exchanges it took, or `None`
+/// if a reply could not be resolved at all.
+fn confirm_base<T: Transport>(
+    client: &MCClient<T>,
+    base: u32,
+    count: u32,
+    timeout: f64,
+) -> Result<Option<(u32, usize)>> {
+    let mut candidate = base;
+    let mut exchanges = 0usize;
+
+    for _ in 0..MAX_CONFIRMATION_STEPS {
+        let probe_linear = candidate.saturating_add(1);
+        let Ok(address) = roland_address_from_linear(probe_linear) else {
+            // `candidate` is the last byte of the address space, so there is
+            // nothing above it to test against and nothing above it to be
+            // confused with.
+            return Ok(Some((candidate, exchanges)));
+        };
+
+        exchanges += 1;
+        let Some(reply) = client.read_dt1(address, count, timeout)? else {
+            return Ok(Some((candidate, exchanges)));
+        };
+
+        match resolve_reply_location_from(reply.address, probe_linear) {
+            ReplyLocation::Resolved { linear, .. } if linear == probe_linear => {
+                return Ok(Some((candidate, exchanges)))
+            }
+            ReplyLocation::Resolved { linear, .. } => candidate = linear,
+            _ => return Ok(None),
+        }
     }
+
+    Ok(None)
 }
 
-/// Record a failure, keeping at most [`MAX_RECORDED_FAILURES`] of them.
+/// Record a failure, keeping at most/// Record a failure, keeping at most [`MAX_RECORDED_FAILURES`] of them.
 fn record_failure(snapshot: &mut Snapshot, address: u32, message: String) {
     if snapshot.failures.len() < MAX_RECORDED_FAILURES {
         snapshot.failures.push((address, message));
@@ -337,6 +369,7 @@ pub fn walk_with_progress<T: Transport>(
         truncated_placements: 0,
         unprovable_placements: 0,
         confirmations: 0,
+        confirmation_exchanges: 0,
     };
 
     // Work stack of (linear start, byte count) still to resolve. A short
@@ -439,24 +472,25 @@ pub fn walk_with_progress<T: Transport>(
             base
         } else {
             match confirm_base(client, base, count, opts.timeout) {
-                Ok(Some(confirmed)) => {
+                Ok(Some((confirmed, exchanges))) => {
+                    snapshot.confirmations += 1;
+                    snapshot.confirmation_exchanges += exchanges;
                     if confirmed != base {
                         snapshot.relocated_replies += 1;
                     }
-                    snapshot.confirmations += 1;
                     confirmed
                 }
                 Ok(None) | Err(_) => {
-                    // The follow-up told us nothing, so the address stays a
-                    // guess. Record rather than place: a wrong entry in the
-                    // address map looks entirely plausible.
                     snapshot.unprovable_placements += 1;
                     record_failure(
                         &mut snapshot,
                         address,
                         format!(
-                            "reply address 0x{:08X} could not be confirmed; {} and {} + 0x{:X} are indistinguishable",
-                            message.address, base, base, CANDIDATE_SPACING
+                            "reply address 0x{:08X} could not be confirmed; linear 0x{:08X} and \
+                             0x{:08X} are indistinguishable once masked",
+                            message.address,
+                            base,
+                            base.saturating_add(CANDIDATE_SPACING)
                         ),
                     );
                     progress(address, 0);
@@ -623,6 +657,7 @@ impl Snapshot {
             "truncated_placements": self.truncated_placements,
             "unprovable_placements": self.unprovable_placements,
             "confirmations": self.confirmations,
+            "confirmation_exchanges": self.confirmation_exchanges,
             "failures": self
                 .failures
                 .iter()
@@ -698,6 +733,10 @@ impl Snapshot {
                 .and_then(Value::as_u64)
                 .unwrap_or(0) as usize,
             confirmations: v.get("confirmations").and_then(Value::as_u64).unwrap_or(0) as usize,
+            confirmation_exchanges: v
+                .get("confirmation_exchanges")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize,
             failures: v
                 .get("failures")
                 .and_then(Value::as_array)

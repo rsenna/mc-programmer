@@ -49,7 +49,7 @@ exactly as long as the request **and ends within it**. Neither condition alone
 is enough, and even together they are necessary rather than sufficient — see
 "Two things the protocol cannot confirm" below. `probe::walk` splits any shorter reply in
 half and re-probes, down to single bytes, so a byte is placed only where the
-exchange supports it. The cost is extra requests near region edges
+exchange supports it. The cost is one extra request per answered chunk
 (`Snapshot::subdivisions` counts them); the benefit is that sweeps at chunk
 `0x10`, `0x20` and `0x80` of the same range now agree byte for byte, where
 before they disagreed by tens of bytes.
@@ -63,7 +63,12 @@ Taking the lower candidate would write a payload `0x80` bytes from where it
 belongs and report it as certain. So whenever the resolution is not forced,
 the sweep asks again from one byte above: that drops the requested address out
 of the candidate set, and the two cases give different answers.
-`Snapshot::confirmations` counts those follow-ups. When a follow-up settles
+`Snapshot::confirmations` counts those follow-ups and
+`confirmation_exchanges` what they cost. Both are the normal state, not an
+anomaly: a masked reply almost always has a higher candidate, so nearly every
+answered chunk is confirmed and **a range that answers costs about twice the
+requests the chunk count suggests**. A sweep over mostly-unmapped space costs
+nothing extra, since silence needs no confirming. When a follow-up settles
 nothing, the payload is **discarded** and counted in
 `unprovable_placements` — a non-zero value means the sweep has holes.
 
@@ -78,7 +83,8 @@ matters by re-sweeping at a different `chunk`: requests then start at
 different addresses and compress differently.
 
 `Snapshot` reports `relocated_replies`, `subdivisions`, `confirmations`,
-`unplaceable_replies`, `unprovable_placements` and `truncated_placements`.
+`confirmation_exchanges`, `unplaceable_replies`, `unprovable_placements` and
+`truncated_placements`.
 
 ## Address arithmetic, and why ranges look odd
 
@@ -126,7 +132,9 @@ restore and failing a dump.
 
 ### 2. Survey which regions answer at all
 
-One 16-byte poke at each top-byte boundary — 128 requests, ~13 s worst case:
+One 16-byte poke at each top-byte boundary — 128 requests, ~13 s when most of
+it is unmapped (silence costs no confirmation; a range that answers roughly
+doubles the exchanges):
 
 ```bash
 cargo run --features midir --bin mc-probe -- dump \

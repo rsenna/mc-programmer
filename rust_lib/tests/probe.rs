@@ -238,6 +238,7 @@ fn failures_round_trip_through_json() {
         truncated_placements: 0,
         unprovable_placements: 0,
         confirmations: 0,
+        confirmation_exchanges: 0,
     };
     snapshot.bytes.insert(0x20000000, 0x7f);
 
@@ -378,6 +379,7 @@ fn diff_reports_addresses_present_on_only_one_side() {
         truncated_placements: 0,
         unprovable_placements: 0,
         confirmations: 0,
+        confirmation_exchanges: 0,
     };
     before.bytes.insert(0x20000000, 0xaa);
 
@@ -434,6 +436,7 @@ fn diff_runs_join_across_the_packed_address_discontinuity() {
         truncated_placements: 0,
         unprovable_placements: 0,
         confirmations: 0,
+        confirmation_exchanges: 0,
     };
     before.bytes.insert(0x2000007f, 0x00);
     before.bytes.insert(0x20000100, 0x00);
@@ -502,6 +505,7 @@ fn runs_collapse_contiguous_bytes_and_split_at_gaps() {
         truncated_placements: 0,
         unprovable_placements: 0,
         confirmations: 0,
+        confirmation_exchanges: 0,
     };
     snapshot.bytes.insert(0x20000000, 1);
     snapshot.bytes.insert(0x20000001, 2);
@@ -802,4 +806,96 @@ fn an_empty_reply_is_not_counted_as_answered() {
         "an unusable reply is not an answer"
     );
     assert!(snapshot.chunks_probed >= snapshot.chunks_answered + snapshot.chunks_failed);
+}
+
+/// A device mapping exactly `[first, last_exclusive)` and nothing else.
+struct MapsRange {
+    first: u32,
+    last_exclusive: u32,
+}
+
+impl mc_programmer::Transport for MapsRange {
+    fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+        let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+        let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+        let count = u32::from(message[15]).max(1);
+        let start = base.max(self.first);
+        if start >= self.last_exclusive {
+            return Ok(Vec::new());
+        }
+        let len = count.min(self.last_exclusive - start);
+        let data: Vec<u8> = (0..len)
+            .map(|i| 0x30 + (start + i - self.first) as u8)
+            .collect();
+        Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), start & 0x7f7f_7f7f, &data).unwrap())
+    }
+}
+
+#[test]
+fn the_last_byte_of_a_mapped_region_is_not_dropped() {
+    // The byte at a region's top edge has an unmapped successor, so the
+    // confirmation follow-up gets silence. Silence is evidence, not ignorance:
+    // had the run really started 0x80 further on, that run is mapped and above
+    // the follow-up's address, so the device would have answered. Treating it
+    // as unknown discarded the byte — and a one-byte field at a region's end
+    // is exactly what a scene-block diff needs to see.
+    const BASE: u32 = 0x0400_0000; // linear of packed 0x20000000
+    let client = MCClient::new(
+        MapsRange {
+            first: BASE,
+            last_exclusive: BASE + 5,
+        },
+        ModelId::Mc101.value(),
+    );
+
+    for chunk in [1u32, 2, 4, 8, 0x10] {
+        let snapshot = probe::walk(
+            &client,
+            0x20000000,
+            0x20000010,
+            &ProbeOptions::gapless(chunk),
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot.bytes.len(),
+            5,
+            "chunk 0x{chunk:X}: expected all 5 mapped bytes, got {:?}",
+            snapshot.bytes
+        );
+        assert!(
+            snapshot.bytes.contains_key(&0x20000004),
+            "chunk 0x{chunk:X}: the region's last byte was dropped"
+        );
+        assert_eq!(snapshot.unprovable_placements, 0, "chunk 0x{chunk:X}");
+    }
+}
+
+#[test]
+fn confirmation_exchanges_are_counted_so_real_traffic_is_visible() {
+    // Confirmation fires on nearly every answered chunk, so a sweep costs
+    // about twice the requests `chunks_probed` alone would suggest. That has
+    // to be visible, or the CLI's request count understates MIDI traffic 2x.
+    const BASE: u32 = 0x0400_0000;
+    let client = MCClient::new(
+        MapsRange {
+            first: BASE,
+            last_exclusive: BASE + 0x40,
+        },
+        ModelId::Mc101.value(),
+    );
+
+    let snapshot = probe::walk(
+        &client,
+        0x20000000,
+        0x20000040,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    assert_eq!(snapshot.bytes.len(), 0x40);
+    assert!(snapshot.confirmations > 0);
+    assert!(
+        snapshot.confirmation_exchanges >= snapshot.confirmations,
+        "each confirmation costs at least one exchange"
+    );
 }

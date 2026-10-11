@@ -152,10 +152,11 @@ fn cmd_dump(args: &[String]) -> Result<(), String> {
 
     snapshot.save(&out).map_err(|e| e.to_string())?;
     eprintln!(
-        "{} byte(s) from {}/{} chunk(s) in {:.1}s -> {out}",
+        "{} byte(s) from {}/{} chunk(s) plus {} confirmation exchange(s) in {:.1}s -> {out}",
         snapshot.len(),
         snapshot.chunks_answered,
         snapshot.chunks_probed,
+        snapshot.confirmation_exchanges,
         began.elapsed().as_secs_f64()
     );
     if snapshot.subdivisions > 0 || snapshot.truncated_placements > 0 {
@@ -174,9 +175,9 @@ fn cmd_dump(args: &[String]) -> Result<(), String> {
     }
     if snapshot.unprovable_placements > 0 {
         eprintln!(
-            "warning: {} address(es) could not be proven — a second candidate for the \
-             reply's masked address fell within the request's reach. Re-sweep at a \
-             smaller --chunk to narrow them.",
+            "warning: {} reply/replies could not be confirmed and were DISCARDED, so this \
+             sweep has holes. Re-sweeping will not change it — the masking is genuinely \
+             ambiguous there; treat those addresses as unknown.",
             snapshot.unprovable_placements
         );
     }
