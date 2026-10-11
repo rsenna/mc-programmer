@@ -47,6 +47,11 @@ For hardware, construct `MidirTransport::connect("MC-707")?` and pass it to
 case-insensitive name matching; connecting requires a MIDI device and backend
 permissions.
 
+If an RQ1 times out, that transport refuses subsequent RQ1 requests. Roland
+SysEx replies have no transaction ID, so a late reply cannot be distinguished
+safely from a new one. Re-establish a clean MIDI input session before creating
+a replacement transport.
+
 ## API layers
 
 - Musician-facing helpers use 1-based track, clip, and step numbers; note

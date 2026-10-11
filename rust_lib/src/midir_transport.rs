@@ -29,17 +29,28 @@ pub struct MidiPortNames {
 struct ReplyState {
     frames: VecDeque<Vec<u8>>,
     pending: Vec<u8>,
+    rq1_timed_out: bool,
 }
 
 impl ReplyState {
-    /// Discard queued replies and any incomplete SysEx frame before a transaction.
-    fn clear(&mut self) {
+    /// Clear queued input for a new request without resetting timeout safety.
+    fn prepare(&mut self, expected: ExpectedReply) -> Result<()> {
+        if self.rq1_timed_out && matches!(expected, ExpectedReply::Rq1 { .. }) {
+            return Err(Error::Midi(
+                "MIDI transport is unsynchronized after an RQ1 timeout; refusing further RQ1 requests".to_string(),
+            ));
+        }
         self.frames.clear();
         self.pending.clear();
+        Ok(())
+    }
+
+    fn mark_rq1_timed_out(&mut self) {
+        self.rq1_timed_out = true;
     }
 
     /// Collect incoming bytes into SysEx frames and report whether a frame completed.
-    /// Ignore bytes outside frames and restart assembly on a new `0xF0`.
+    /// Ignore bytes outside frames and restart assembly on a new 0xF0.
     fn ingest(&mut self, message: &[u8]) -> bool {
         let mut completed = false;
         for &byte in message {
@@ -63,6 +74,7 @@ impl ReplyState {
         completed
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ExpectedReply {
     NoReply,
@@ -141,7 +153,10 @@ fn timeout_duration(timeout: f64) -> Result<Duration> {
 /// Synchronous request/reply transport for real MIDI hardware.
 ///
 /// Construct it with [`MidirTransport::connect`]. Calls to [`Transport::transfer`]
-/// are serialized so a reply can never be consumed by a concurrent request.
+/// are serialized so a reply cannot be consumed by a concurrent request.
+/// After an RQ1 timeout, this instance permanently rejects later RQ1 requests:
+/// SysEx has no transaction ID to distinguish a late reply from a new one.
+/// Re-establish a clean MIDI input session before constructing a replacement.
 pub struct MidirTransport {
     // midir connection handles are Send but not Sync. The mutexes satisfy the
     // Transport trait's Sync requirement and keep each connection alive.
@@ -230,7 +245,10 @@ impl Transport for MidirTransport {
             .checked_add(timeout)
             .ok_or_else(|| Error::Value("MIDI timeout exceeds the supported duration".to_string()))?;
         let (state, ready) = &*self.replies;
-        state.lock().clear();
+        {
+            let mut state = state.lock();
+            state.prepare(expected)?;
+        }
         self.output
             .lock()
             .send(message)
@@ -248,6 +266,9 @@ impl Transport for MidirTransport {
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                if matches!(expected, ExpectedReply::Rq1 { .. }) {
+                    state.mark_rq1_timed_out();
+                }
                 return Ok(Vec::new());
             }
             ready.wait_for(&mut state, remaining);
@@ -354,7 +375,7 @@ mod tests {
 
 #[cfg(test)]
 mod request_match_tests {
-    use super::{expected_reply, reply_matches, timeout_duration};
+    use super::{expected_reply, reply_matches, timeout_duration, ExpectedReply, ReplyState};
     use crate::protocol::{build_dt1, build_rq1, universal_device_inquiry};
     use std::time::Duration;
 
@@ -390,6 +411,25 @@ mod request_match_tests {
         let checksum = corrupt.len() - 2;
         corrupt[checksum] ^= 1;
         assert!(!reply_matches(&expected, &corrupt));
+    }
+    #[test]
+    fn late_rq1_reply_cannot_satisfy_a_following_request_after_timeout() {
+        let packed = 0x2000_0010;
+        let linear = crate::addresses::roland_address_to_linear(packed).unwrap();
+        let request = build_rq1(0x5d, packed, 2).unwrap();
+        let expected = expected_reply(&request).unwrap();
+        let late_reply = build_dt1(0x5d, linear, &[1]).unwrap();
+
+        assert!(reply_matches(&expected, &late_reply));
+
+        let mut state = ReplyState::default();
+        state.prepare(expected).unwrap();
+        state.mark_rq1_timed_out();
+        assert!(state.ingest(&late_reply));
+
+        let error = state.prepare(expected).unwrap_err();
+        assert!(error.to_string().contains("unsynchronized"));
+        assert_eq!(state.frames.front(), Some(&late_reply));
     }
 
     #[test]
