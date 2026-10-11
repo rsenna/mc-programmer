@@ -154,9 +154,9 @@ sub-block. Both are now in the framework:
 ### Tests
 
 - [x] Python: 76 tests via `unittest`, all passing
-- [x] Swift: 42 tests via `XCTest`, all passing, runs in ~40 seconds
-      (project round-trip dominates the time — exercises ~15 KB per tone
-      through chunked I/O)
+- [x] Swift: 44 tests via XCTest, all passing; full suite runs in ~8 seconds
+      (the file round-trip uses a compact fixture; the full dump/restore
+      integration path remains covered)
 - [x] Rust: 146 tests via `cargo test --all-features`, all passing
 
 ---
@@ -227,11 +227,9 @@ address before the parameter table can be added safely.
 
 ### Known small bugs / cleanups
 
-- [ ] The Swift Project test takes ~40 seconds due to single-threaded
-      chunked I/O against `LoopbackTransport`. The Python equivalent is
-      ~13 seconds. Both are exercising real code paths so the speed
-      difference isn't a correctness issue, but the Swift test could be
-      sped up by parallelising the loopback dispatch.
+- [x] Swift test runtime: use a compact Project fixture for file round-trip,
+      while retaining the full dump-and-restore integration path. This avoids
+      repeating a 136-tone chunked dump and reduces the local suite to ~8s.
 - [ ] `LoopbackTransport.snapshot()` defaults its unread bytes to `0`
       (for test inspection) while `transfer()` defaults them to `0xFF`
       (matching the real MC's empty-step encoding). The asymmetry is

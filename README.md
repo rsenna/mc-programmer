@@ -11,7 +11,7 @@ table:
 | Library | Status | Tests |
 |---|---|---|
 | **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 76 / 76 |
-| **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 42 / 42 |
+| **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 44 / 44 |
 | **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 146 / 146 |
 
 All three libraries cover **~389 named ZEN-Core tone parameters** auto-generated
@@ -117,7 +117,7 @@ mc-programmer/
 │   ├── Package.swift
 │   ├── Sources/MCProgrammer/       ← library source
 │   ├── Examples/              ← executable target with bundled examples
-│   └── Tests/MCProgrammerTests/    ← XCTest suite (42 tests)
+│   └── Tests/MCProgrammerTests/    ← XCTest suite (44 tests)
 │
 ├── rust_lib/                 ← Rust crate (mc-programmer)
 │   ├── README.md             ← Rust-specific guide
@@ -170,7 +170,8 @@ swift test
 swift run MCProgrammerExamples           # runs the bundled offline examples
 ```
 
-42 tests; ~40 seconds (the project round-trip exercises ~15 KB per tone).
+44 tests; ~8 seconds in a local run. The full dump/restore integration test
+remains; the file round-trip test uses a compact project fixture.
 
 ### Rust
 

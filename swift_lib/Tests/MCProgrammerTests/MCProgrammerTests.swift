@@ -448,19 +448,46 @@ final class MCProgrammerTests: XCTestCase {
     }
 
     func testProjectFileRoundtrip() throws {
-        let src = MCClient(transport: LoopbackTransport(), modelID: .mc707)
-        try src.writeToneName(track: 0, clip: 0, "PROJECT TEST")
+        // Keep the serialization fixture small; the full dump/restore path is
+        // already exercised by testProjectDumpThenLoadIntoBlankDevice.
+        let tone = TonePreset(model: "MC-707", name: "PROJECT TEST", regions: [
+            ToneRegion(offset: 0x0000, label: "tone_common", data: [0x10, 0x20]),
+            ToneRegion(offset: 0x0100, label: "tone_mfx", data: [0xA5]),
+        ])
+        let clip = ClipDump(
+            clipNumber: 1,
+            stepScale: 1,
+            stepCount: 2,
+            noteSteps: [0x01, 0x02],
+            motionSteps: [0x03],
+            pitchbend: [0x04],
+            tone: tone
+        )
+        let track = TrackDump(
+            trackNumber: 1,
+            settings: [0x05, 0x06],
+            trackTone: tone,
+            clips: [clip]
+        )
+        let project = Project(
+            model: "MC-707",
+            name: "snapshot",
+            tracks: [track],
+            systemHeader: [0xA5],
+            systemBlock: [0x5A]
+        )
 
         let path = NSTemporaryDirectory() + "test_\(UUID().uuidString).mctproject"
         defer { try? FileManager.default.removeItem(atPath: path) }
 
-        try Project.dumpFrom(client: src, name: "snapshot").save(toPath: path)
-        let project = try Project.load(fromPath: path)
-        XCTAssertEqual(project.name, "snapshot")
-
-        let dst = MCClient(transport: LoopbackTransport(), modelID: .mc707)
-        try project.loadInto(client: dst)
-        XCTAssertEqual(try dst.readToneName(track: 0, clip: 0), "PROJECT TEST")
+        try project.save(toPath: path)
+        let loaded = try Project.load(fromPath: path)
+        XCTAssertEqual(loaded.format, PROJECT_FORMAT)
+        XCTAssertEqual(loaded.model, project.model)
+        XCTAssertEqual(loaded.name, project.name)
+        XCTAssertEqual(loaded.tracks, project.tracks)
+        XCTAssertEqual(loaded.systemHeader, project.systemHeader)
+        XCTAssertEqual(loaded.systemBlock, project.systemBlock)
     }
 
     func testProjectLoadRefusesWrongModelUnlessForced() throws {
