@@ -1,0 +1,16 @@
+rust_lib/Cargo.lock
+  h_0f0df16e3c7bfc 101,136,138,143,278,280,301,394,396,402,411-419,534-542,616-621
+rust_lib/Cargo.toml
+  h_0f0df16e3c7bfc 32-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "988f8325195bc14e38d61c9d1919b7b34e1ce1cd",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
