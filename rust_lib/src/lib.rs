@@ -44,8 +44,8 @@ pub mod zencore;
 mod zencore_data;
 
 pub use addresses::{
-    reply_address_candidates, resolve_reply_location, AddressMap, ReplyLocation, StepScale, CLIPS_PER_TRACK,
-    NUM_TRACKS, STEPS_PER_CLIP, STEP_SIZE,
+    reply_address_candidates, resolve_reply_location, resolve_reply_location_from, AddressMap, ReplyLocation,
+    StepScale, CANDIDATE_SPACING, CLIPS_PER_TRACK, NUM_TRACKS, STEPS_PER_CLIP, STEP_SIZE,
 };
 pub use client::{ClipStepParams, MCClient};
 pub use error::{Error, Result};

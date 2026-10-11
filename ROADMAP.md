@@ -2,9 +2,9 @@
 
 What the libraries currently cover, what's still missing, and how to add
 the missing pieces. The Python (`python_lib/mc_programmer/`), Swift
-(`swift_lib/Sources/MCProgrammer/`), and Rust (`rust_lib/src/`) packages share
-this roadmap — every feature ships in all three, with parallel implementations
-and tests.
+(`swift_lib/Sources/MCProgrammer/`), and Rust (`rust_lib/src/`) packages use this
+roadmap to track shared capabilities and language-specific features or gaps;
+not every feature is implemented in all three packages.
 
 ---
 
@@ -290,8 +290,7 @@ dump again, diff.
 2. **Adding a verified MC address**: add the matching constants to the Python,
    Swift, and Rust address-map modules, then build a parameter table for it the
    same way (or, for opaque blobs, add it to `Project` directly).
-3. **Probing for unverified addresses**: the original
-   use `mc-probe` and the procedure in
+3. **Probing for unverified addresses**: use `mc-probe` and the procedure in
    [`docs/PROBING.md`](docs/PROBING.md). It supersedes the original
    `hack_tools.py` exploration script (removed from this repo, still in git
    history), which used the same dump-change-dump-diff method. Confirm a

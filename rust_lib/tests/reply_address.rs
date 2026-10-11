@@ -1,19 +1,21 @@
 //! Decoding the MC's masked DT1 reply address.
 //!
-//! Every expectation here is a frame captured from a real MC-101, or the
-//! Roland Clan forum report of the same behaviour on one.
+//! Hardware observations are listed in CAPTURES; the other tests also use
+//! synthetic addresses to cover edge cases, not as evidence about device behavior.
 
 use mc_programmer::addresses::{
     reply_address_candidates, resolve_reply_location, roland_address_from_linear, roland_address_to_linear,
 };
-use mc_programmer::ReplyLocation;
+use mc_programmer::{
+    build_dt1, resolve_reply_location_from, MCClient, ModelId, NullTransport, ReplyLocation, CANDIDATE_SPACING,
+};
 
 /// Reply bytes seen on the wire for a given packed request, from raw Sys-Ex
 /// captures: (requested packed address, count, reply address field).
 ///
-/// (A capture for "0x40000080" was discarded: that is not a valid packed
-/// address — 0x80 has its MSB set — and `build_rq1` masks it, so the device was
-/// really asked about 0x40000000.)
+/// The earlier note's "0x40000080" address was not a capture: `build_rq1`
+/// rejects it because the 0x80 byte is not 7-bit-safe. The valid captured
+/// requests are the rows below, including 0x40000100.
 const CAPTURES: &[(u32, u32, u32)] = &[
     (0x40000000, 10, 0x08000000),
     (0x40010000, 4, 0x08004000),
@@ -125,7 +127,7 @@ fn candidates_cover_every_masked_byte_and_stay_in_the_address_space() {
     // never carry bit 7, and those 8 combinations are discarded.
     assert_eq!(candidates.len(), 8, "{candidates:?}");
     assert!(candidates.contains(&0x00000000));
-    assert!(candidates.contains(&0x00000080));
+    assert!(candidates.contains(&CANDIDATE_SPACING));
     assert!(candidates.contains(&0x00008000));
     assert!(candidates.contains(&0x00808080));
     for candidate in &candidates {
@@ -174,8 +176,48 @@ fn a_forced_resolution_is_marked_provable() {
     // carrying bit 7 — no higher one exists, so the answer is forced and can
     // be trusted outright.
     let linear = 0x0fff_ffffu32;
-    match resolve_reply_location(linear & 0x7f7f_7f7f, linear) {
+    match resolve_reply_location_from(linear & 0x7f7f_7f7f, linear) {
         ReplyLocation::Resolved { provable, .. } => assert!(provable),
         other => panic!("expected a provable resolution, got {other:?}"),
     }
+}
+#[test]
+fn client_read_returns_only_an_exact_requested_range() {
+    let model = ModelId::Mc101.value();
+    let address = 0x20000000;
+    let data = [0x12, 0x34];
+
+    let exact = build_dt1(model, address, &data).unwrap();
+    let client = MCClient::new(NullTransport::with_responses(vec![exact]), model);
+    assert_eq!(client.read_with_timeout(address, 2, 0.1).unwrap(), data);
+
+    let relocated = build_dt1(model, address + 0x10, &data).unwrap();
+    let client = MCClient::new(
+        NullTransport::with_responses(vec![relocated.clone()]),
+        model,
+    );
+    assert!(client.read_with_timeout(address, 2, 0.1).is_err());
+
+    // Probes need the raw address and payload from this relocated reply; strict
+    // read rejects it, while `read_dt1` preserves it for probing.
+    let client = MCClient::new(NullTransport::with_responses(vec![relocated]), model);
+    let reply = client.read_dt1(address, 2, 0.1).unwrap().unwrap();
+    assert_eq!(reply.address, address + 0x10);
+    assert_eq!(reply.data, data);
+
+    let short = build_dt1(model, address, &[data[0]]).unwrap();
+    let client = MCClient::new(NullTransport::with_responses(vec![short]), model);
+    assert!(client.read_with_timeout(address, 2, 0.1).is_err());
+}
+#[test]
+fn client_read_accepts_a_provably_masked_exact_range() {
+    let model = ModelId::Mc101.value();
+    let address = 0x7f7f_7f7f;
+    let request_linear = roland_address_to_linear(address).unwrap();
+    let masked_reply_address = request_linear & 0x7f7f_7f7f;
+    let data = [0x12, 0x34];
+
+    let reply = build_dt1(model, masked_reply_address, &data).unwrap();
+    let client = MCClient::new(NullTransport::with_responses(vec![reply]), model);
+    assert_eq!(client.read_with_timeout(address, 2, 0.1).unwrap(), data);
 }

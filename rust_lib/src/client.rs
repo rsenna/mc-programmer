@@ -18,7 +18,8 @@
 //! and call `transport.transfer`.
 
 use crate::addresses::{
-    add_roland_address, add_roland_offset, AddressMap, StepScale, STEP_SIZE, TONE_COMMON_COARSE_TUNE_OFFS,
+    add_roland_address, add_roland_offset, resolve_reply_location_from, roland_address_to_linear, AddressMap,
+    ReplyLocation, StepScale, STEP_SIZE, TONE_COMMON_COARSE_TUNE_OFFS,
 };
 use crate::error::{Error, Result};
 use crate::notes::Pitch;
@@ -75,20 +76,20 @@ impl<T: Transport> MCClient<T> {
     }
 
     // ---- low-level RQ1 / DT1 ----------------------------------------------
-
-    /// Request `count` bytes at a packed Roland address and return the DT1 payload.
-    /// An empty transport reply yields an empty vector; framing and transport errors propagate.
+    /// Request exactly count bytes at a packed Roland address and return the payload.
+    /// An empty vector means no reply before timeout; malformed, wrong-range,
+    /// or wrong-length replies return an error.
     pub fn read(&self, address: u32, count: u32) -> Result<Vec<u8>> {
         self.read_with_timeout(address, count, 0.1)
     }
 
     /// Like [`read`](Self::read) but with an explicit reply timeout in seconds.
     ///
-    /// Address-space probing needs this: an unmapped address never replies, so a
-    /// sweep pays the full timeout on every miss and wants it as short as the link
-    /// allows, while a slow or busy device may need longer than the 0.1 s default.
-    /// Measured on an MC-101: 0.03 s already loses mapped regions, so shortening it
-    /// is not free.
+    /// Rejects valid replies whose address or payload length differs from the
+    /// requested range. Probes should use [`read_dt1`](Self::read_dt1) to inspect
+    /// relocated replies.
+    /// A slow or busy device may need longer than 0.1 s; on an MC-101,
+    /// 0.03 s already loses mapped regions, so shortening it is not free.
     pub fn read_with_timeout(&self, address: u32, count: u32, timeout: f64) -> Result<Vec<u8>> {
         let msg = build_rq1(self.model_id, address, count)?;
         if count == 0 {
@@ -106,15 +107,25 @@ impl<T: Transport> MCClient<T> {
                 self.model_id, reply[6]
             )));
         }
-        if response.address != address {
-            return Err(Error::Midi(format!(
-                "DT1 address mismatch: requested 0x{address:08X}, got 0x{:08X}",
+        let request_linear = roland_address_to_linear(address)?;
+        let address_matches = response.address == address
+            || matches!(
+                resolve_reply_location_from(response.address, request_linear),
+                ReplyLocation::Resolved {
+                    linear,
+                    provable: true,
+                    ..
+                } if linear == request_linear
+            );
+        if !address_matches {
+            return Err(Error::Value(format!(
+                "DT1 response address 0x{:08X} does not match requested address 0x{address:08X}",
                 response.address
             )));
         }
         if response.data.len() != count as usize {
-            return Err(Error::Midi(format!(
-                "DT1 payload length mismatch at 0x{address:08X}: requested {count}, got {}",
+            return Err(Error::Value(format!(
+                "DT1 payload length mismatch: expected {count} bytes, got {}",
                 response.data.len()
             )));
         }
