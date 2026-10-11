@@ -6,28 +6,28 @@
 //!
 //! ```text
 //! mc-probe ports
-//! mc-probe backup   device-backup.json
 //! mc-probe dump     --start 01000000 --end 01010000 --label "scene 1" -o before.json
 //! mc-probe dump     --start 01000000 --end 01010000 --label "scene 2" -o after.json
 //! mc-probe diff     before.json after.json
-//! mc-probe restore  device-backup.json
 //! ```
 //!
-//! Back up before probing. Probing only ever *reads*, but a session on real
-//! hardware involves changing things by hand, and `restore` puts them back.
+//! Probing only ever *reads*. The front-panel changes an operator makes
+//! between sweeps are the only thing at risk, so save the project to the
+//! device's own SD card first — `Project::dump_from` cannot currently complete
+//! against real hardware (see docs/PROBING.md).
 
 use std::process::ExitCode;
 use std::time::Instant;
 
 use mc_programmer::probe::{self, ProbeOptions, Snapshot};
-use mc_programmer::{MCClient, MidirTransport, Project};
+use mc_programmer::{MCClient, MidirTransport};
 
 const DEFAULT_DEVICE: &str = "MC-101";
 
 /// Flags that take no value. Everything else beginning with `-` consumes the
 /// next argument, so a value that looks like a flag (`--timeout -1`) is
 /// reported rather than silently ignored.
-const BOOLEAN_FLAGS: &[&str] = &["--csv", "--force", "-h", "--help"];
+const BOOLEAN_FLAGS: &[&str] = &["--csv", "-h", "--help"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -46,6 +46,10 @@ fn run(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     let rest = &args[1..];
+    if rest.iter().any(|a| a == "-h" || a == "--help") {
+        print_usage();
+        return Ok(());
+    }
 
     match command.as_str() {
         "ports" => cmd_ports(),
@@ -53,8 +57,6 @@ fn run(args: &[String]) -> Result<(), String> {
         "diff" => cmd_diff(rest),
         "scene" => cmd_scene(rest),
         "clip" => cmd_clip(rest),
-        "backup" => cmd_backup(rest),
-        "restore" => cmd_restore(rest),
         "help" | "-h" | "--help" => {
             print_usage();
             Ok(())
@@ -76,8 +78,6 @@ mc-probe — MC address-space explorer
          [--csv]
   scene N [--channel C]                 recall scene N via Program Change
   clip   TRACK N [--channel C]          recall clip N on TRACK via Program Change
-  backup FILE.json [--device NAME]      dump the whole device project
-  restore FILE.json [--device NAME]     write a project back [--force]
 
 Addresses are packed Roland hex, with or without 0x. Every byte is 7-bit,
 so 0x...0080 is not a valid address and 0x...0100 is the byte after
@@ -110,6 +110,9 @@ fn cmd_dump(args: &[String]) -> Result<(), String> {
     let start = opts.required_address("--start")?;
     let end = opts.required_address("--end")?;
     let out = opts.required("-o")?;
+    if opts.flag("--csv") {
+        return Err("dump writes CSV with --csv-out FILE, not --csv".to_string());
+    }
 
     let probe_opts = ProbeOptions {
         chunk: opts.number("--chunk")?.unwrap_or(probe::DEFAULT_CHUNK),
@@ -169,11 +172,12 @@ fn cmd_dump(args: &[String]) -> Result<(), String> {
             }
         );
     }
-    if snapshot.assumed_contiguous_placements > 0 || snapshot.unprovable_placements > 0 {
+    if snapshot.unprovable_placements > 0 {
         eprintln!(
-            "note: {} run(s) assumed contiguous and {} address(es) unproven — the protocol \
-             cannot confirm either. Re-sweep with a different --chunk to cross-check.",
-            snapshot.assumed_contiguous_placements, snapshot.unprovable_placements
+            "warning: {} address(es) could not be proven — a second candidate for the \
+             reply's masked address fell within the request's reach. Re-sweep at a \
+             smaller --chunk to narrow them.",
+            snapshot.unprovable_placements
         );
     }
     if snapshot.unplaceable_replies > 0 {
@@ -313,40 +317,6 @@ fn cmd_clip(args: &[String]) -> Result<(), String> {
         .select_clip(track, clip, channel)
         .map_err(|e| e.to_string())?;
     eprintln!("sent clip {clip} recall for track {track}");
-    Ok(())
-}
-
-fn cmd_backup(args: &[String]) -> Result<(), String> {
-    let opts = Args::parse(args)?;
-    let path = opts
-        .positionals()
-        .first()
-        .cloned()
-        .ok_or("backup needs an output file")?;
-
-    let client = connect(&opts)?;
-    eprintln!("dumping the whole device project — this takes a few minutes");
-    let project = Project::dump_from(&client, Some("mc-probe backup".to_string()), true).map_err(|e| e.to_string())?;
-    project.save(&path).map_err(|e| e.to_string())?;
-    eprintln!("backup -> {path}");
-    Ok(())
-}
-
-fn cmd_restore(args: &[String]) -> Result<(), String> {
-    let opts = Args::parse(args)?;
-    let path = opts
-        .positionals()
-        .first()
-        .cloned()
-        .ok_or("restore needs an input file")?;
-
-    let project = Project::load(&path).map_err(|e| e.to_string())?;
-    let client = connect(&opts)?;
-    eprintln!("writing {path} back to the device");
-    project
-        .load_into(&client, opts.flag("--force"))
-        .map_err(|e| e.to_string())?;
-    eprintln!("restored");
     Ok(())
 }
 

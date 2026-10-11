@@ -181,7 +181,7 @@ cargo test --all-features
 cargo run --example four_on_the_floor
 ```
 
-188 tests including unit, integration, feature-gated transport, and doctests.
+192 tests including unit, integration, feature-gated transport, and doctests.
 
 ### Regenerating the ZEN-Core parameter tables
 

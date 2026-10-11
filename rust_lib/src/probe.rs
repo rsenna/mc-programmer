@@ -170,22 +170,18 @@ pub struct Snapshot {
     /// address, so a non-zero count means the sweep has holes — refine the
     /// range or chunk size and re-run.
     pub unplaceable_replies: usize,
-    /// Multi-byte payloads laid down contiguously on the assumption that the
-    /// device did not gap-compress them. The protocol provides no way to
-    /// confirm this, so a non-zero count means that many runs in this snapshot
-    /// could in principle be a mapped run from further on, squeezed into an
-    /// apparently contiguous span. Cross-check a suspicious run by sweeping it
-    /// again at a smaller `chunk`, which starts requests at different
-    /// addresses and so compresses differently.
-    pub assumed_contiguous_placements: usize,
-    /// Placements whose address could not be proven, because the reply's
-    /// masked address fits both the requested address and one `0x80` further
-    /// on. The bytes are recorded as the leading hypothesis; a non-zero count
-    /// means that many of this snapshot's addresses are not certain. See
+    /// Placements whose address could not be proven, because a second
+    /// candidate for the reply's masked address also falls within the
+    /// request's reach. The bytes are recorded as the leading hypothesis; a
+    /// non-zero count means that many of this snapshot's addresses are not
+    /// certain, and is expected to be zero on a well-behaved sweep. See
     /// [`crate::addresses::resolve_reply_location`].
     pub unprovable_placements: usize,
-    /// Payloads cut short because they ran past the top of the 28-bit address
-    /// space. Expected to be zero everywhere except the very end of the space.
+    /// Payloads cut short because they ran past the end of the swept range or
+    /// the top of the 28-bit address space. The device answers with the next
+    /// mapped run at or after the request, so it can volunteer bytes beyond
+    /// what was asked for; those are dropped rather than silently widening the
+    /// snapshot.
     pub truncated_placements: usize,
     /// Requests the sweep had to split because the reply could not be shown to
     /// cover its request. Expected around the edges of mapped regions; the cost
@@ -241,9 +237,19 @@ fn record_failure(snapshot: &mut Snapshot, address: u32, message: String) {
 /// than propagated as an error: a sweep takes minutes, and aborting it over a
 /// payload that runs off the top of the space would throw away everything
 /// collected so far — the same policy applied to unparseable frames.
-fn place(snapshot: &mut Snapshot, base: u32, data: &[u8]) {
+fn place(snapshot: &mut Snapshot, base: u32, data: &[u8], sweep_end: u32) {
     for (i, &byte) in data.iter().enumerate() {
-        let Ok(address) = roland_address_from_linear(base + i as u32) else {
+        let linear = base + i as u32;
+        // The device answers with the next mapped run at or after the address
+        // asked for, which can reach past the range the caller swept. Those
+        // bytes are real, but they are outside what was requested, and a
+        // snapshot that quietly extended beyond its own range would be
+        // confusing to diff.
+        if linear >= sweep_end {
+            snapshot.truncated_placements += 1;
+            return;
+        }
+        let Ok(address) = roland_address_from_linear(linear) else {
             snapshot.truncated_placements += 1;
             return;
         };
@@ -292,7 +298,6 @@ pub fn walk_with_progress<T: Transport>(
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
-        assumed_contiguous_placements: 0,
     };
 
     // Work stack of (linear start, byte count) still to resolve. A short
@@ -331,10 +336,26 @@ pub fn walk_with_progress<T: Transport>(
         };
         snapshot.chunks_answered += 1;
 
+        // `read_dt1` deliberately skips the payload-length check that `read`
+        // applies, so a well-formed DT1 carrying no payload reaches here. It
+        // must not reach the slicing below: `&data[..1]` on an empty payload
+        // panics, and one such reply would abort a sweep that every other
+        // error path in this function is written to keep alive.
+        if message.data.is_empty() {
+            snapshot.chunks_failed += 1;
+            record_failure(
+                &mut snapshot,
+                address,
+                "DT1 reply carried an empty payload".to_string(),
+            );
+            progress(address, 0);
+            continue;
+        }
+
         // Where does this payload actually live? The reply reports the data's
         // linear address with every byte masked to 7 bits, so the request has
         // to disambiguate it.
-        let (base, relocated, provable) = match resolve_reply_location(message.address, start_linear) {
+        let (base, relocated, provable) = match resolve_reply_location(message.address, start_linear, count) {
             ReplyLocation::Resolved {
                 linear,
                 relocated,
@@ -375,6 +396,17 @@ pub fn walk_with_progress<T: Transport>(
             snapshot.relocated_replies += 1;
         }
 
+        // The device answered beyond the requested span, which means it found
+        // nothing mapped inside it. Subdividing would re-ask about a range the
+        // device has already answered for — 2·chunk−1 round trips to learn
+        // what one reply said, with every counter inflated by the same factor.
+        // Record the one byte whose address the device reported, and move on.
+        if base >= start_linear.saturating_add(count) {
+            place(&mut snapshot, base, &message.data[..1], last);
+            progress(address, 1);
+            continue;
+        }
+
         // Can this payload be laid down contiguously from `base`?
         //
         // Two necessary conditions: it is as long as the request, and it does
@@ -383,34 +415,28 @@ pub fn walk_with_progress<T: Transport>(
         //
         // They are NOT sufficient, and cannot be made so. The device
         // gap-compresses a partly-mapped span — returning only the mapped
-        // bytes, concatenated — and a gap-compressed payload can match the
-        // requested length exactly: asked for 8 bytes over a span whose middle
-        // 4 are unmapped, a device that keeps reading past the span returns 4
-        // bytes from inside it and 4 from beyond, totalling 8. Nothing in
-        // (address, length, count) distinguishes that from a clean 8-byte run,
-        // and the obvious cross-check — confirming each byte with its own
-        // 1-byte request — is not available: the MC largely ignores
-        // single-byte requests, so silence from one proves nothing.
-        //
-        // So a multi-byte contiguous placement is the leading hypothesis, not
-        // a fact, and `assumed_contiguous_placements` counts how many of them
-        // a snapshot rests on. Short or over-long replies are still narrowed,
-        // which is what keeps the common case honest.
+        // bytes, concatenated — and such a payload can match the requested
+        // length exactly: asked for 8 bytes over a span whose middle 4 are
+        // unmapped, a device that keeps reading past the span returns 4 from
+        // inside it and 4 from beyond, totalling 8 and ending exactly at the
+        // span's end. Nothing in (address, length, count) separates that from
+        // a clean 8-byte run, and the obvious cross-check — confirming each
+        // byte with its own 1-byte request — is unavailable, because the MC
+        // largely ignores single-byte requests, so silence from one proves
+        // nothing. `docs/PROBING.md` records this as a standing limitation
+        // rather than a per-sweep counter, since it applies to every
+        // multi-byte placement and so carries no diagnostic signal.
         let reach = base.saturating_add(message.data.len() as u32);
         let covers_request = message.data.len() as u32 == count && reach <= start_linear.saturating_add(count);
 
         if covers_request {
-            if message.data.len() > 1 {
-                snapshot.assumed_contiguous_placements += 1;
-            }
-            place(&mut snapshot, base, &message.data);
+            place(&mut snapshot, base, &message.data, last);
             progress(address, message.data.len());
         } else if count == 1 {
-            // One byte was asked for and the device answered at `base`, so
-            // only that first byte is confirmed there; the rest of the payload
-            // is whatever followed it in the device's own layout and its
-            // addresses are not established.
-            place(&mut snapshot, base, &message.data[..1]);
+            // One byte was asked for and the device answered at `base`, so only
+            // that first byte is confirmed there; whatever followed it in the
+            // device's own layout has no established address.
+            place(&mut snapshot, base, &message.data[..1], last);
             progress(address, 1);
         } else {
             let half = count / 2;
@@ -525,7 +551,6 @@ impl Snapshot {
             "subdivisions": self.subdivisions,
             "truncated_placements": self.truncated_placements,
             "unprovable_placements": self.unprovable_placements,
-            "assumed_contiguous_placements": self.assumed_contiguous_placements,
             "failures": self
                 .failures
                 .iter()
@@ -598,10 +623,6 @@ impl Snapshot {
                 .unwrap_or(0) as usize,
             unprovable_placements: v
                 .get("unprovable_placements")
-                .and_then(Value::as_u64)
-                .unwrap_or(0) as usize,
-            assumed_contiguous_placements: v
-                .get("assumed_contiguous_placements")
                 .and_then(Value::as_u64)
                 .unwrap_or(0) as usize,
             failures: v

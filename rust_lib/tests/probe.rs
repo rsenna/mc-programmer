@@ -226,7 +226,6 @@ fn failures_round_trip_through_json() {
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
-        assumed_contiguous_placements: 0,
     };
     snapshot.bytes.insert(0x20000000, 0x7f);
 
@@ -367,7 +366,6 @@ fn diff_reports_addresses_present_on_only_one_side() {
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
-        assumed_contiguous_placements: 0,
     };
     before.bytes.insert(0x20000000, 0xaa);
 
@@ -423,7 +421,6 @@ fn diff_runs_join_across_the_packed_address_discontinuity() {
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
-        assumed_contiguous_placements: 0,
     };
     before.bytes.insert(0x2000007f, 0x00);
     before.bytes.insert(0x20000100, 0x00);
@@ -491,7 +488,6 @@ fn runs_collapse_contiguous_bytes_and_split_at_gaps() {
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
-        assumed_contiguous_placements: 0,
     };
     snapshot.bytes.insert(0x20000000, 1);
     snapshot.bytes.insert(0x20000001, 2);
@@ -614,57 +610,101 @@ fn a_short_reply_is_split_rather_than_laid_down_contiguously() {
 }
 
 #[test]
-fn a_reply_matching_the_length_but_running_past_the_span_is_not_trusted() {
-    // The hole a length-only check leaves open, and the reason the gate gained
-    // a second condition. Device model: ignore `count`, return every mapped
-    // byte from the first mapped address at or after the request.
-    //
-    // Map, as linear offsets from packed 0x20000000: 0..4 mapped, 4..8
-    // unmapped, 8..12 mapped. Asked for 8 bytes at offset 0, such a device
-    // returns offsets 0,1,2,3,8,9,10,11 — EIGHT bytes, exactly the length
-    // requested. Trusting the length alone places the last four over the hole
-    // at offsets 4..7, silently, with every counter reporting a clean sweep.
-    const BASE: u32 = 0x0400_0000; // linear of packed 0x20000000
-    fn mapped(linear: u32) -> bool {
-        let i = linear - BASE;
-        i < 4 || (8..12).contains(&i)
-    }
-
-    struct IgnoresCount;
-    impl mc_programmer::Transport for IgnoresCount {
+fn a_full_length_reply_that_ends_past_the_request_is_not_trusted() {
+    // Pins the gate's SECOND condition. Remove `reach <= start_linear + count`
+    // from probe.rs and this test fails: the device returns exactly `count`
+    // bytes but starting two bytes into the span, so the payload ends past the
+    // request and the last two bytes belong to addresses outside it.
+    struct AnswersTwoBytesLate;
+    impl mc_programmer::Transport for AnswersTwoBytesLate {
         fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
             let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
             let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
-            let count = u32::from(message[15]).max(1);
-
-            // Every mapped byte at or after the request, up to `count` of them,
-            // drawn from beyond the span when the span runs short.
-            let offsets: Vec<u32> = (base..BASE + 16)
-                .filter(|&o| mapped(o))
-                .take(count as usize)
-                .collect();
-            let Some(&first) = offsets.first() else {
-                return Ok(Vec::new());
-            };
-            let data: Vec<u8> = offsets.iter().map(|&o| 0x10 + (o - BASE) as u8).collect();
-            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), first & 0x7f7f_7f7f, &data).unwrap())
+            let count = u32::from(message[15]).max(1) as usize;
+            // Same length as the request, but shifted forward by two.
+            let data: Vec<u8> = (0..count).map(|i| 0x40 + i as u8).collect();
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), (base + 2) & 0x7f7f_7f7f, &data).unwrap())
         }
     }
 
-    let client = MCClient::new(IgnoresCount, ModelId::Mc101.value());
+    let client = MCClient::new(AnswersTwoBytesLate, ModelId::Mc101.value());
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(4)).unwrap();
+
+    // Trusting length alone would place 4 bytes at linear +2..+6, i.e. two of
+    // them past the request. The gate must refuse, narrow, and end up placing
+    // only bytes the device gave an address for.
+    assert!(
+        snapshot.subdivisions > 0,
+        "an over-long reach must force a split"
+    );
+    assert!(
+        !snapshot.bytes.contains_key(&0x20000004),
+        "no byte may be placed past the requested range"
+    );
+    assert!(
+        !snapshot.bytes.contains_key(&0x20000005),
+        "no byte may be placed past the requested range"
+    );
+}
+
+#[test]
+fn an_empty_dt1_payload_does_not_abort_the_sweep() {
+    // `read_dt1` skips the payload-length check `read` applies, so a
+    // well-formed DT1 with no payload reaches the walker. It used to panic on
+    // `&data[..1]`, destroying a sweep that had taken minutes.
+    struct EmptyPayload;
+    impl mc_programmer::Transport for EmptyPayload {
+        fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+            let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), base & 0x7f7f_7f7f, &[]).unwrap())
+        }
+    }
+
+    let client = MCClient::new(EmptyPayload, ModelId::Mc101.value());
+    // chunk 1 reaches the one-byte arm directly; subdivision would too.
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(1)).unwrap();
+
+    assert!(snapshot.is_empty());
+    assert_eq!(
+        snapshot.chunks_failed, 4,
+        "each empty reply is recorded, not fatal"
+    );
+    assert!(
+        snapshot.failures[0].1.contains("empty payload"),
+        "{:?}",
+        snapshot.failures[0]
+    );
+}
+
+#[test]
+fn a_reply_beyond_the_request_is_not_subdivided_to_death() {
+    // The device reporting a base past the span has already said the span
+    // holds nothing. Re-asking in halves costs 2*chunk-1 round trips to learn
+    // what one reply said, and inflates every counter by the same factor.
+    struct AnswersFarAway;
+    impl mc_programmer::Transport for AnswersFarAway {
+        fn transfer(&self, _message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), 0x0400_1000, &[0x5a]).unwrap())
+        }
+    }
+
+    let client = MCClient::new(AnswersFarAway, ModelId::Mc101.value());
     let snapshot = probe::walk(
         &client,
         0x20000000,
-        0x20000010,
-        &ProbeOptions::gapless(0x10),
+        0x20000100,
+        &ProbeOptions::gapless(0x80),
     )
     .unwrap();
 
-    // The misplacement cannot be prevented — see `probe::walk`. What must not
-    // happen is that it goes unreported: a snapshot carrying assumed-contiguous
-    // runs has to say so, so an operator knows which runs to cross-check.
-    assert!(
-        snapshot.assumed_contiguous_placements > 0,
-        "a contiguous multi-byte placement must be declared an assumption"
+    assert_eq!(snapshot.chunks_probed, 1, "one request, not 2*chunk-1");
+    assert_eq!(
+        snapshot.subdivisions, 0,
+        "the span is known empty; splitting it is wasted I/O"
     );
+    // The address the device volunteered lies outside the swept range, so the
+    // byte is dropped rather than widening the snapshot past what was asked.
+    assert!(snapshot.is_empty());
+    assert_eq!(snapshot.truncated_placements, 1);
 }

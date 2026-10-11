@@ -53,8 +53,10 @@ pub fn add_roland_offset(address: u32, byte_offset: u32) -> Result<u32> {
 /// Candidate linear addresses a DT1 reply could be reporting.
 ///
 /// The MC reports the returned data's **linear** address, but pushes it
-/// through the 7-bit MIDI pipe with every byte masked to `0x7F` — so up to 16
-/// distinct linear addresses arrive as the same four bytes. (Verified on an
+/// through the 7-bit MIDI pipe with every byte masked to `0x7F` — so up to 8
+/// distinct linear addresses arrive as the same four bytes (8, not 16: a
+/// linear address is bounded by 28 bits, so its top byte can never carry bit 7
+/// and those combinations fall outside the space). (Verified on an
 /// MC-101: requests for packed `0x40000080`, `0x40000100` and `0x40020000`,
 /// whose linear forms are `0x08000000`, `0x08000080` and `0x08008000`, all
 /// reply `08 00 00 00`. A Roland Clan forum report of request `32 10 00 00`
@@ -128,37 +130,38 @@ pub const CANDIDATE_SPACING: u32 = 0x80;
 /// from `0x40000020` answered for `0x4000002E` — past the end of the span. So
 /// the answer is the lowest candidate at or after the request.
 ///
-/// # This cannot always be proven
+/// # When the masking cannot be inverted
 ///
-/// The masking is not always invertible, even with the request in hand. If the
-/// device relocated forward by exactly [`CANDIDATE_SPACING`] (or a multiple),
-/// the relocated address and the request produce the *same* masked reply, and
-/// nothing in the exchange distinguishes them: asked at linear `0x100`, a
-/// device that truly answered for `0x180` sends the same four bytes as one
-/// that answered for `0x100`.
+/// Candidates are [`CANDIDATE_SPACING`] apart, so if the device relocated
+/// forward by exactly that much it produces the *same* masked reply as one
+/// that answered at the request: asked at linear `0x100`, a device answering
+/// for `0x180` is indistinguishable from one answering for `0x100`.
 ///
-/// Such a resolution is returned with `provable: false`. It is the best
-/// available hypothesis — the device answers with the *next* mapped run, so
-/// the nearest candidate is the likelier one — but it is a hypothesis, and
-/// callers must carry that uncertainty rather than bury it. A
-/// confirming 1-byte read does not settle it: the MC largely ignores
-/// single-byte requests, so silence from one proves nothing.
-///
-/// `provable: true` means no other candidate is at or after the request, so
-/// the answer is forced.
-pub fn resolve_reply_location(reply_address: u32, request_linear: u32) -> ReplyLocation {
+/// `provable` reports whether that doubt is live **for this request**. The
+/// alternative candidate only matters if the device could plausibly have
+/// jumped there, i.e. if it lies within the span the request covers; a
+/// candidate beyond `request_linear + count` would mean the device skipped the
+/// entire requested range, which the caller detects on its own. So `provable`
+/// is false only when another candidate falls inside the request's own reach —
+/// which is the question an operator actually needs answered, rather than
+/// "does any higher candidate exist anywhere in the address space" (it almost
+/// always does, making such a flag constant and useless).
+pub fn resolve_reply_location(reply_address: u32, request_linear: u32, count: u32) -> ReplyLocation {
     let forward: Vec<u32> = reply_address_candidates(reply_address)
         .into_iter()
         .filter(|&candidate| candidate >= request_linear)
         .collect();
 
-    match forward.first() {
-        None => ReplyLocation::Unexplained,
-        Some(&linear) => ReplyLocation::Resolved {
-            linear,
-            relocated: linear != request_linear,
-            provable: forward.len() == 1,
-        },
+    let Some(&linear) = forward.first() else {
+        return ReplyLocation::Unexplained;
+    };
+    let reach = request_linear.saturating_add(count.max(1));
+    let contested = forward.iter().skip(1).any(|&other| other < reach);
+
+    ReplyLocation::Resolved {
+        linear,
+        relocated: linear != request_linear,
+        provable: !contested,
     }
 }
 

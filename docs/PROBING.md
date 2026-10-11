@@ -23,7 +23,7 @@ replies has to as well.
 
 **1. The reply address is linear, and masked.** An RQ1 request carries the
 address as four 7-bit packed bytes. The DT1 reply carries the *linear* value
-— and every byte of it is masked to `0x7F` by the MIDI pipe, so up to 16
+— and every byte of it is masked to `0x7F` by the MIDI pipe, so up to 8
 linear addresses arrive as the same four bytes. Packed `0x40000000`,
 `0x40000100` and `0x40020000` have linear forms `0x08000000`, `0x08000080`
 and `0x08008000`, and all three reply `08 00 00 00`. The request is what
@@ -44,10 +44,12 @@ squeezed out. Byte *i* of a short payload is therefore not byte *i* of the
 span. A 128-byte request returned 60 apparently contiguous bytes across a
 span where 16-byte requests showed an 8-byte hole.
 
-Consequence: a payload may be laid down contiguously **only when the reply is
-exactly as long as the request**. `probe::walk` splits any shorter reply in
-half and re-probes, down to single bytes, so every byte lands at an address it
-was actually confirmed at. The cost is extra requests near region edges
+Consequence: a payload may be laid down contiguously only when the reply is
+exactly as long as the request **and ends within it**. Neither condition alone
+is enough, and even together they are necessary rather than sufficient — see
+"Two things the protocol cannot confirm" below. `probe::walk` splits any shorter reply in
+half and re-probes, down to single bytes, so a byte is placed only where the
+exchange supports it. The cost is extra requests near region edges
 (`Snapshot::subdivisions` counts them); the benefit is that sweeps at chunk
 `0x10`, `0x20` and `0x80` of the same range now agree byte for byte, where
 before they disagreed by tens of bytes.
