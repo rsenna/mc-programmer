@@ -228,43 +228,59 @@ fn cmd_diff(args: &[String]) -> Result<(), String> {
 
     let before = Snapshot::load(before_path).map_err(|e| e.to_string())?;
     let after = Snapshot::load(after_path).map_err(|e| e.to_string())?;
+    let diffs = probe::diff(&before, &after).map_err(|error| error.to_string())?;
 
-    describe(before_path, &before);
-    describe(after_path, &after);
-    println!();
-
-    let diffs = probe::diff(&before, &after);
     if opts.flag("--csv") {
+        warn_uncertainty(before_path, &before);
+        warn_uncertainty(after_path, &after);
         println!("address,before,after");
-        for d in &diffs {
+        for diff in &diffs {
             println!(
                 "{:08X},{},{}",
-                d.address,
-                hex_or_dash(d.before),
-                hex_or_dash(d.after)
+                diff.address,
+                hex_or_dash(diff.before),
+                hex_or_dash(diff.after)
             );
         }
         return Ok(());
     }
+
+    describe(before_path, &before);
+    describe(after_path, &after);
+    println!();
     print!("{}", probe::format_diff(&probe::diff_runs(&diffs)));
     Ok(())
 }
 
-fn describe(path: &str, snapshot: &Snapshot) {
+fn warn_uncertainty(path: &str, snapshot: &Snapshot) {
+    if snapshot.unconfirmed_placements > 0 {
+        eprintln!(
+            "{path}: warning — {} placement(s) rely on silence and are not confirmed",
+            snapshot.unconfirmed_placements
+        );
+    }
+    if snapshot.unprovable_placements > 0 {
+        eprintln!(
+            "{path}: warning — {} placement(s) could not be resolved and were discarded",
+            snapshot.unprovable_placements
+        );
+    }
     if snapshot.unplaceable_replies > 0 {
-        println!(
-            "{path}: warning — {} reply/replies were discarded as unplaceable, so this \
-             snapshot has holes unrelated to the device's state",
+        eprintln!(
+            "{path}: warning — {} reply/replies were discarded as unplaceable, so this snapshot has holes",
             snapshot.unplaceable_replies
         );
     }
     if snapshot.chunks_failed > 0 {
-        println!(
-            "{path}: warning — {} chunk(s) failed during this sweep, so some \
-             addresses are missing for reasons unrelated to the device's state",
+        eprintln!(
+            "{path}: warning — {} chunk(s) failed during this sweep, so some addresses are missing",
             snapshot.chunks_failed
         );
     }
+}
+
+fn describe(path: &str, snapshot: &Snapshot) {
+    warn_uncertainty(path, snapshot);
     println!(
         "{path}: {} byte(s), {}{}",
         snapshot.len(),
@@ -272,7 +288,7 @@ fn describe(path: &str, snapshot: &Snapshot) {
         snapshot
             .label
             .as_ref()
-            .map(|l| format!(", {l:?}"))
+            .map(|label| format!(", {label:?}"))
             .unwrap_or_default()
     );
 }

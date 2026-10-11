@@ -40,14 +40,18 @@
 //! transport.preload(0x20000002, &[0x33]);
 //! let after = probe::walk(&client, 0x20000000, 0x20000010, &opts).unwrap();
 //!
-//! let changes = probe::diff(&before, &after);
+//! let changes = probe::diff(&before, &after).unwrap();
 //! assert_eq!(changes.len(), 1);
 //! assert_eq!(changes[0].address, 0x20000002);
 //! assert_eq!((changes[0].before, changes[0].after), (Some(0x03), Some(0x33)));
 //! ```
 
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
@@ -74,6 +78,7 @@ pub const MAX_CHUNK: u32 = 0x80;
 /// exact; only the per-address detail is capped, so a link that is failing
 /// everywhere cannot balloon the file.
 pub const MAX_RECORDED_FAILURES: usize = 64;
+static SNAPSHOT_TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// How a walk reads a range.
 #[derive(Debug, Clone, Copy)]
@@ -132,10 +137,74 @@ impl ProbeOptions {
                 self.step, self.chunk
             )));
         }
-        if self.timeout <= 0.0 || self.timeout.is_nan() {
-            return Err(Error::Value("probe timeout must be positive".to_string()));
+        if !self.timeout.is_finite() || self.timeout <= 0.0 || Duration::try_from_secs_f64(self.timeout).is_err() {
+            return Err(Error::Value(
+                "probe timeout must be positive and representable by the MIDI backend".to_string(),
+            ));
         }
         Ok(())
+    }
+}
+
+/// Address range and sampling pattern attempted by one probe sweep.
+///
+/// The end is exclusive and both endpoints are linear addresses, not packed
+/// SysEx addresses. A diff compares only bytes covered by both snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScanCoverage {
+    pub start_linear: u32,
+    pub end_linear: u32,
+    pub chunk: u32,
+    pub step: u32,
+}
+
+impl ScanCoverage {
+    fn validate(self) -> Result<()> {
+        if self.start_linear > self.end_linear
+            || self.end_linear > 0x1000_0000
+            || self.chunk == 0
+            || self.chunk > MAX_CHUNK
+            || MAX_CHUNK % self.chunk != 0
+            || self.step < self.chunk
+        {
+            return Err(Error::Value("invalid probe coverage metadata".to_string()));
+        }
+        Ok(())
+    }
+
+    fn contains(self, linear: u32) -> bool {
+        if linear < self.start_linear || linear >= self.end_linear {
+            return false;
+        }
+        self.chunk == self.step || (linear - self.start_linear) % self.step < self.chunk
+    }
+    fn to_value(self) -> Value {
+        json!({
+            "start_linear": self.start_linear,
+            "end_linear": self.end_linear,
+            "chunk": self.chunk,
+            "step": self.step,
+        })
+    }
+
+    fn from_value(value: &Value) -> Result<Self> {
+        let read = |field: &str| {
+            value
+                .get(field)
+                .and_then(Value::as_u64)
+                .and_then(|number| u32::try_from(number).ok())
+                .ok_or_else(|| Error::Json(format!("snapshot coverage has invalid {field}")))
+        };
+        let coverage = Self {
+            start_linear: read("start_linear")?,
+            end_linear: read("end_linear")?,
+            chunk: read("chunk")?,
+            step: read("step")?,
+        };
+        coverage
+            .validate()
+            .map_err(|error| Error::Json(error.to_string()))?;
+        Ok(coverage)
     }
 }
 
@@ -152,6 +221,8 @@ pub struct Snapshot {
     pub label: Option<String>,
     /// Packed address → byte value.
     pub bytes: BTreeMap<u32, u8>,
+    /// Sweep range and sampling pattern; absent only for older snapshot files.
+    pub coverage: Option<ScanCoverage>,
     /// Chunks requested during the walk.
     pub chunks_probed: usize,
     /// Chunks that produced a reply.
@@ -251,39 +322,31 @@ impl DiffRun {
 const MAX_CONFIRMATION_STEPS: usize = 8;
 
 /// What a confirmation climb established about a base address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Confirmation {
     /// A follow-up reply positively identified this address.
     Confirmed(u32),
-    /// Every follow-up went silent. That is *consistent* with the run being
-    /// the single byte at this address — had it started further on, that run
-    /// is mapped above the follow-up and the device would have answered — but
-    /// it is not proof: [`MCClient::read_dt1`] also reports silence for a
-    /// dropped frame, interleaved traffic, a busy device, or a request the
-    /// device declines, and the MC in particular largely ignores single-byte
-    /// requests. The bytes are worth keeping; the certainty is not.
-    Unconfirmed(u32),
-    /// Nothing could be established. `exhausted` distinguishes "ran out of
-    /// rounds" (a different sweep may do better) from "a reply could not be
-    /// resolved at all" (it cannot).
+    /// Keep the candidate bytes, but record that the follow-up did not prove
+    /// their address. A failed read is included in the snapshot failure list.
+    Unconfirmed {
+        candidate: u32,
+        failure: Option<String>,
+    },
+    /// Nothing could be established. The exhausted flag distinguishes running
+    /// out of rounds from a reply that could not be resolved at all.
     Unresolved { exhausted: bool },
 }
 
-/// Settle an ambiguous base by asking again from just above it.
+/// Settle an ambiguous base by querying the next byte.
 ///
-/// Asking from `candidate + 1` drops `candidate` out of the candidate set,
-/// which is what breaks the collapse described in
-/// [`resolve_reply_location`](crate::addresses::resolve_reply_location):
-///
-/// * **Answers `candidate + 1`.** The byte above is mapped too, so the run
-///   genuinely starts at `candidate` — [`Confirmation::Confirmed`].
-/// * **Answers higher.** That is the next mapped run, which may itself be a
-///   collapse, so the test repeats from there.
-/// * **Silence.** Consistent with a one-byte run at `candidate`, but not
-///   proof — [`Confirmation::Unconfirmed`].
+/// A reply exactly at that byte confirms the candidate. If the reply has the
+/// same masked address as the original, it may be the same run at a higher
+/// candidate, so the bounded climb can continue. A different later address is
+/// a separate mapped run and cannot locate the original payload.
 fn confirm_base<T: Transport>(
     client: &MCClient<T>,
     base: u32,
+    original_reply_address: u32,
     count: u32,
     timeout: f64,
 ) -> Result<(Confirmation, usize)> {
@@ -293,22 +356,48 @@ fn confirm_base<T: Transport>(
     for _ in 0..MAX_CONFIRMATION_STEPS {
         let probe_linear = candidate.saturating_add(1);
         let Ok(address) = roland_address_from_linear(probe_linear) else {
-            // `candidate` is the last byte of the address space: there is
-            // nothing above it to test against, and nothing above it to be
-            // confused with, so this one IS forced.
             return Ok((Confirmation::Confirmed(candidate), exchanges));
         };
 
         exchanges += 1;
-        let Some(reply) = client.read_dt1(address, count, timeout)? else {
-            return Ok((Confirmation::Unconfirmed(candidate), exchanges));
+        let reply = match client.read_dt1(address, count, timeout) {
+            Ok(Some(reply)) => reply,
+            Ok(None) => {
+                return Ok((
+                    Confirmation::Unconfirmed {
+                        candidate,
+                        failure: None,
+                    },
+                    exchanges,
+                ));
+            }
+            Err(error) => {
+                return Ok((
+                    Confirmation::Unconfirmed {
+                        candidate,
+                        failure: Some(error.to_string()),
+                    },
+                    exchanges,
+                ));
+            }
         };
 
         match resolve_reply_location_from(reply.address, probe_linear) {
             ReplyLocation::Resolved { linear, .. } if linear == probe_linear => {
                 return Ok((Confirmation::Confirmed(candidate), exchanges))
             }
-            ReplyLocation::Resolved { linear, .. } => candidate = linear,
+            ReplyLocation::Resolved { linear, .. } if reply.address == original_reply_address => {
+                candidate = linear;
+            }
+            ReplyLocation::Resolved { .. } => {
+                return Ok((
+                    Confirmation::Unconfirmed {
+                        candidate,
+                        failure: None,
+                    },
+                    exchanges,
+                ));
+            }
             _ => return Ok((Confirmation::Unresolved { exhausted: false }, exchanges)),
         }
     }
@@ -321,6 +410,62 @@ fn record_failure(snapshot: &mut Snapshot, address: u32, message: String) {
     if snapshot.failures.len() < MAX_RECORDED_FAILURES {
         snapshot.failures.push((address, message));
     }
+}
+
+fn write_snapshot_atomically(path: &Path, contents: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| Error::Value("snapshot path has no file name".to_string()))?
+        .to_string_lossy();
+    let permissions = match fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => Some(metadata.permissions()),
+        Ok(_) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+
+    for _ in 0..32 {
+        let sequence = SNAPSHOT_TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temporary = parent.join(format!(
+            ".{file_name}.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
+        let mut file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        };
+
+        let write_result = file.write_all(contents).and_then(|()| {
+            if let Some(permissions) = &permissions {
+                file.set_permissions(permissions.clone())?;
+            }
+            file.sync_all()
+        });
+        drop(file);
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&temporary);
+            return Err(error.into());
+        }
+        if let Err(error) = fs::rename(&temporary, path) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error.into());
+        }
+        return Ok(());
+    }
+
+    Err(Error::Value(
+        "could not allocate a temporary file for snapshot save".to_string(),
+    ))
 }
 
 /// Write a payload into the snapshot at `base`.
@@ -381,6 +526,12 @@ pub fn walk_with_progress<T: Transport>(
         model: model_name(client.model_id),
         label: None,
         bytes: BTreeMap::new(),
+        coverage: Some(ScanCoverage {
+            start_linear: first,
+            end_linear: last,
+            chunk: opts.chunk,
+            step: opts.step,
+        }),
         chunks_probed: 0,
         chunks_answered: 0,
         chunks_failed: 0,
@@ -492,19 +643,25 @@ pub fn walk_with_progress<T: Transport>(
         let base = if provable {
             base
         } else {
-            let (outcome, exchanges) = confirm_base(client, base, count, opts.timeout)?;
+            let (outcome, exchanges) = confirm_base(client, base, message.address, count, opts.timeout)?;
             snapshot.confirmation_exchanges += exchanges;
             match outcome {
                 Confirmation::Confirmed(confirmed) => {
                     snapshot.confirmations += 1;
                     confirmed
                 }
-                Confirmation::Unconfirmed(assumed) => {
-                    // Keep the bytes — dropping them loses the last byte of
-                    // every mapped region — but do not call it a fact. Silence
-                    // is also what a dropped frame looks like.
+                Confirmation::Unconfirmed { candidate, failure } => {
+                    // Keep bytes whose location is only a hypothesis; dropping
+                    // them loses useful evidence, but the snapshot must say so.
                     snapshot.unconfirmed_placements += 1;
-                    assumed
+                    if let Some(error) = failure {
+                        record_failure(
+                            &mut snapshot,
+                            address,
+                            format!("confirmation follow-up failed: {error}"),
+                        );
+                    }
+                    candidate
                 }
                 Confirmation::Unresolved { exhausted } => {
                     snapshot.unprovable_placements += 1;
@@ -685,6 +842,7 @@ impl Snapshot {
             "format": SNAPSHOT_FORMAT,
             "model": self.model,
             "label": self.label,
+            "coverage": self.coverage.map(ScanCoverage::to_value),
             "chunks_probed": self.chunks_probed,
             "chunks_answered": self.chunks_answered,
             "chunks_failed": self.chunks_failed,
@@ -738,6 +896,10 @@ impl Snapshot {
                 bytes.insert(roland_address_from_linear(base + i as u32)?, byte);
             }
         }
+        let coverage = match v.get("coverage") {
+            None | Some(Value::Null) => None,
+            Some(value) => Some(ScanCoverage::from_value(value)?),
+        };
 
         Ok(Snapshot {
             model: v
@@ -747,6 +909,7 @@ impl Snapshot {
                 .to_string(),
             label: v.get("label").and_then(Value::as_str).map(str::to_string),
             bytes,
+            coverage,
             chunks_probed: v.get("chunks_probed").and_then(Value::as_u64).unwrap_or(0) as usize,
             chunks_answered: v
                 .get("chunks_answered")
@@ -811,8 +974,8 @@ impl Snapshot {
     }
 
     pub fn save(&self, path: &str) -> Result<()> {
-        fs::write(path, self.to_json())?;
-        Ok(())
+        let contents = self.to_json();
+        write_snapshot_atomically(Path::new(path), contents.as_bytes())
     }
 
     pub fn load(path: &str) -> Result<Self> {
@@ -820,35 +983,58 @@ impl Snapshot {
     }
 }
 
-/// Every byte that differs between two snapshots.
+/// Every byte that differs between two snapshots over their shared coverage.
 ///
-/// Addresses present in only one snapshot are reported with `None` on the
-/// other side: a region that starts or stops answering is a real change.
-pub fn diff(before: &Snapshot, after: &Snapshot) -> Vec<ByteDiff> {
-    let mut diffs: Vec<ByteDiff> = Vec::new();
+/// Returns an error if the snapshots are from different models or lack
+/// coverage metadata, as old snapshots cannot distinguish missing data from
+/// addresses that were never probed.
+pub fn diff(before: &Snapshot, after: &Snapshot) -> Result<Vec<ByteDiff>> {
+    if before.model != after.model {
+        return Err(Error::Value(format!(
+            "cannot diff snapshots from different models: {} and {}",
+            before.model, after.model
+        )));
+    }
+    let before_coverage = before.coverage.ok_or_else(|| {
+        Error::Value("snapshot is missing probe coverage; re-run the sweep before diffing".to_string())
+    })?;
+    let after_coverage = after.coverage.ok_or_else(|| {
+        Error::Value("snapshot is missing probe coverage; re-run the sweep before diffing".to_string())
+    })?;
+    before_coverage.validate()?;
+    after_coverage.validate()?;
 
-    for (&address, &b) in &before.bytes {
-        match after.bytes.get(&address) {
-            Some(&a) if a == b => {}
-            other => diffs.push(ByteDiff {
+    let mut diffs: Vec<ByteDiff> = Vec::new();
+    for (&address, &before_value) in &before.bytes {
+        let linear = roland_address_to_linear(address)?;
+        if !before_coverage.contains(linear) || !after_coverage.contains(linear) {
+            continue;
+        }
+        let after_value = after.bytes.get(&address).copied();
+        if after_value != Some(before_value) {
+            diffs.push(ByteDiff {
                 address,
-                before: Some(b),
-                after: other.copied(),
-            }),
+                before: Some(before_value),
+                after: after_value,
+            });
         }
     }
-    for (&address, &a) in &after.bytes {
-        if !before.bytes.contains_key(&address) {
+    for (&address, &after_value) in &after.bytes {
+        if before.bytes.contains_key(&address) {
+            continue;
+        }
+        let linear = roland_address_to_linear(address)?;
+        if before_coverage.contains(linear) && after_coverage.contains(linear) {
             diffs.push(ByteDiff {
                 address,
                 before: None,
-                after: Some(a),
+                after: Some(after_value),
             });
         }
     }
 
-    diffs.sort_by_key(|d| roland_address_to_linear(d.address).unwrap_or(u32::MAX));
-    diffs
+    diffs.sort_by_key(|diff| roland_address_to_linear(diff.address).unwrap_or(u32::MAX));
+    Ok(diffs)
 }
 
 /// Group a sorted [`diff`] into contiguous runs — one run per changed field.

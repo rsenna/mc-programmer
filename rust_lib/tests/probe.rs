@@ -1,7 +1,7 @@
 //! Tests for the address-space probe.
 
 use mc_programmer::addresses::{roland_address_from_linear, roland_address_to_linear};
-use mc_programmer::probe::{self, ProbeOptions, Snapshot};
+use mc_programmer::probe::{self, ProbeOptions, ScanCoverage, Snapshot};
 use mc_programmer::{LoopbackTransport, MCClient, ModelId, NullTransport};
 
 /// A device whose first mapped byte is at `first_mapped` and which answers
@@ -15,9 +15,12 @@ impl mc_programmer::Transport for FirstMappedAt {
     fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
         let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
         let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
-        let count = u32::from(message[15]).max(1) as usize;
+        let count = ((u32::from(message[12]) << 21)
+            | (u32::from(message[13]) << 14)
+            | (u32::from(message[14]) << 7)
+            | u32::from(message[15])) as usize;
         let start = base.max(self.first_mapped);
-        let data: Vec<u8> = (0..count).map(|i| 0x20 + i as u8).collect();
+        let data: Vec<u8> = (0..count).map(|i| 0x20 + (i as u8 % 0x40)).collect();
         Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), start & 0x7f7f_7f7f, &data).unwrap())
     }
 }
@@ -31,6 +34,14 @@ fn mc101() -> (LoopbackTransport, MCClient<LoopbackTransport>) {
     (transport, client)
 }
 
+fn full_coverage() -> Option<ScanCoverage> {
+    Some(ScanCoverage {
+        start_linear: 0,
+        end_linear: 0x1000_0000,
+        chunk: 0x80,
+        step: 0x80,
+    })
+}
 #[test]
 fn walk_records_every_answered_byte() {
     let (transport, client) = mc101();
@@ -159,6 +170,21 @@ fn probe_options_are_validated() {
             step: 0x10,
             timeout: 0.0,
         },
+        ProbeOptions {
+            chunk: 0x10,
+            step: 0x10,
+            timeout: f64::INFINITY,
+        },
+        ProbeOptions {
+            chunk: 0x10,
+            step: 0x10,
+            timeout: f64::MAX,
+        },
+        ProbeOptions {
+            chunk: 0x10,
+            step: 0x10,
+            timeout: f64::NAN,
+        },
     ];
     for opts in bad {
         assert!(
@@ -228,6 +254,7 @@ fn failures_round_trip_through_json() {
         model: "MC-101".to_string(),
         label: None,
         bytes: Default::default(),
+        coverage: full_coverage(),
         chunks_probed: 2,
         chunks_answered: 1,
         chunks_failed: 1,
@@ -346,7 +373,7 @@ fn diff_finds_a_single_changed_byte() {
     transport.preload(0x20000002, &[0x33]);
     let after = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(4)).unwrap();
 
-    let diffs = probe::diff(&before, &after);
+    let diffs = probe::diff(&before, &after).unwrap();
     assert_eq!(diffs.len(), 1);
     assert_eq!(diffs[0].address, 0x20000002);
     assert_eq!(diffs[0].before, Some(0x03));
@@ -360,8 +387,107 @@ fn identical_snapshots_have_no_diff() {
     let a = probe::walk(&client, 0x20000000, 0x20000002, &ProbeOptions::gapless(2)).unwrap();
     let b = probe::walk(&client, 0x20000000, 0x20000002, &ProbeOptions::gapless(2)).unwrap();
 
-    assert!(probe::diff(&a, &b).is_empty());
+    assert!(probe::diff(&a, &b).unwrap().is_empty());
     assert_eq!(probe::format_diff(&[]), "no differences\n");
+}
+
+#[test]
+fn diff_ignores_addresses_skipped_by_one_sampling_pattern() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, &[0x00; 0x20]);
+    let before = probe::walk(
+        &client,
+        0x20000000,
+        0x20000040,
+        &ProbeOptions {
+            chunk: 0x08,
+            step: 0x10,
+            timeout: 0.1,
+        },
+    )
+    .unwrap();
+
+    transport.preload(0x20000000, &[0x11]);
+    transport.preload(0x20000008, &[0x22]);
+    let after = probe::walk(
+        &client,
+        0x20000000,
+        0x20000040,
+        &ProbeOptions {
+            chunk: 0x08,
+            step: 0x08,
+            timeout: 0.1,
+        },
+    )
+    .unwrap();
+
+    let diffs = probe::diff(&before, &after).unwrap();
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(diffs[0].address, 0x20000000);
+    assert_eq!((diffs[0].before, diffs[0].after), (Some(0x00), Some(0x11)));
+}
+
+#[test]
+fn diff_only_reports_bytes_covered_by_both_sweeps() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, &[0x00; 0x18]);
+    let before = probe::walk(
+        &client,
+        0x20000000,
+        0x20000020,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    transport.preload(0x20000010, &[0x2a]);
+    transport.preload(0x20000020, &[0xbb]);
+    let after = probe::walk(
+        &client,
+        0x20000010,
+        0x20000030,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    let diffs = probe::diff(&before, &after).unwrap();
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(diffs[0].address, 0x20000010);
+    assert_eq!((diffs[0].before, diffs[0].after), (Some(0x00), Some(0x2a)));
+}
+
+#[test]
+fn diff_rejects_snapshots_from_different_models() {
+    let (_transport, client) = mc101();
+    let before = probe::walk(
+        &client,
+        0x20000000,
+        0x20000010,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+    let mut after = before.clone();
+    after.model = "MC-707".to_string();
+
+    let error = probe::diff(&before, &after).unwrap_err();
+    assert!(error.to_string().contains("different models"), "{error}");
+}
+
+#[test]
+fn legacy_snapshots_without_coverage_cannot_be_diffed() {
+    let (_transport, client) = mc101();
+    let snapshot = probe::walk(
+        &client,
+        0x20000000,
+        0x20000010,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+    let mut legacy = snapshot.to_value();
+    legacy.as_object_mut().unwrap().remove("coverage");
+    let legacy = Snapshot::from_value(&legacy).unwrap();
+
+    let error = probe::diff(&legacy, &snapshot).unwrap_err();
+    assert!(error.to_string().contains("coverage"), "{error}");
 }
 
 #[test]
@@ -370,6 +496,7 @@ fn diff_reports_addresses_present_on_only_one_side() {
         model: "MC-101".to_string(),
         label: None,
         bytes: Default::default(),
+        coverage: full_coverage(),
         chunks_probed: 1,
         chunks_answered: 1,
         chunks_failed: 0,
@@ -389,7 +516,7 @@ fn diff_reports_addresses_present_on_only_one_side() {
     after.bytes.remove(&0x20000000);
     after.bytes.insert(0x20000001, 0xbb);
 
-    let diffs = probe::diff(&before, &after);
+    let diffs = probe::diff(&before, &after).unwrap();
     assert_eq!(diffs.len(), 2);
     assert_eq!((diffs[0].before, diffs[0].after), (Some(0xaa), None));
     assert_eq!((diffs[1].before, diffs[1].after), (None, Some(0xbb)));
@@ -406,7 +533,7 @@ fn diff_runs_group_contiguous_changes_and_split_at_gaps() {
     transport.preload(0x20000008, &[0x33]);
     let after = probe::walk(&client, 0x20000000, 0x20000010, &ProbeOptions::default()).unwrap();
 
-    let runs = probe::diff_runs(&probe::diff(&before, &after));
+    let runs = probe::diff_runs(&probe::diff(&before, &after).unwrap());
     assert_eq!(runs.len(), 2);
     assert_eq!(runs[0].address, 0x20000002);
     assert_eq!(runs[0].len(), 2);
@@ -428,6 +555,7 @@ fn diff_runs_join_across_the_packed_address_discontinuity() {
         model: "MC-101".to_string(),
         label: None,
         bytes: Default::default(),
+        coverage: full_coverage(),
         chunks_probed: 1,
         chunks_answered: 1,
         chunks_failed: 0,
@@ -449,7 +577,7 @@ fn diff_runs_join_across_the_packed_address_discontinuity() {
     after.bytes.insert(0x20000100, 0x02);
 
     // 0x7F and 0x0100 are adjacent in linear space, so this is one field.
-    let runs = probe::diff_runs(&probe::diff(&before, &after));
+    let runs = probe::diff_runs(&probe::diff(&before, &after).unwrap());
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].len(), 2);
     assert_eq!(runs[0].address, 0x2000007f);
@@ -468,9 +596,31 @@ fn snapshot_json_round_trips() {
     let restored = Snapshot::from_json(&snapshot.to_json()).unwrap();
 
     assert_eq!(restored.bytes, snapshot.bytes);
+    assert_eq!(restored.coverage, snapshot.coverage);
     assert_eq!(restored.model, "MC-101");
     assert_eq!(restored.label.as_deref(), Some("scene 1 selected"));
     assert_eq!(restored.chunks_probed, snapshot.chunks_probed);
+}
+
+#[test]
+fn snapshot_save_replaces_an_existing_file() {
+    let (_transport, client) = mc101();
+    let original = probe::walk(
+        &client,
+        0x20000000,
+        0x20000010,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+    let path = std::env::temp_dir().join(format!("mc-probe-save-{}.json", std::process::id()));
+    let path = path.to_string_lossy().into_owned();
+
+    original.save(&path).unwrap();
+    let replacement = original.clone().labelled("replacement");
+    replacement.save(&path).unwrap();
+
+    assert_eq!(Snapshot::load(&path).unwrap(), replacement);
+    std::fs::remove_file(&path).unwrap();
 }
 
 #[test]
@@ -498,6 +648,7 @@ fn runs_collapse_contiguous_bytes_and_split_at_gaps() {
         model: "MC-101".to_string(),
         label: None,
         bytes: Default::default(),
+        coverage: full_coverage(),
         chunks_probed: 2,
         chunks_answered: 2,
         chunks_failed: 0,
@@ -746,10 +897,13 @@ fn a_collapsed_reply_address_never_fabricates_bytes_below_the_real_data() {
         let snapshot = probe::walk(
             &client,
             0x00000200,
-            0x00000300,
+            0x00000310,
             &ProbeOptions::gapless(chunk),
         )
         .unwrap();
+        assert_eq!(snapshot.bytes.len(), 0x10, "chunk 0x{chunk:X}");
+        assert_eq!(snapshot.bytes.get(&0x00000300), Some(&0x20));
+        assert_eq!(snapshot.bytes.get(&0x0000030f), Some(&0x2f));
         assert!(
             !snapshot.bytes.contains_key(&0x00000200),
             "chunk 0x{chunk:X}: fabricated bytes at linear 0x100, where the device says nothing is mapped"
@@ -786,6 +940,94 @@ fn a_confirmed_resolution_is_placed_and_counted() {
         "the ambiguity had to be settled by a follow-up"
     );
     assert_eq!(snapshot.unprovable_placements, 0);
+}
+
+#[test]
+fn a_later_mapped_run_does_not_confirm_the_original_payload_address() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const BASE: u32 = 0x0400_0000;
+    struct TwoReplyRuns {
+        calls: AtomicUsize,
+    }
+    impl mc_programmer::Transport for TwoReplyRuns {
+        fn transfer(&self, _request: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let (address, value) = match call {
+                0 => (BASE, 0x11),
+                1 => (BASE + 0x20, 0x22),
+                _ => return Ok(Vec::new()),
+            };
+            let data = [value; 0x10];
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), address & 0x7f7f_7f7f, &data).unwrap())
+        }
+    }
+
+    let client = MCClient::new(
+        TwoReplyRuns {
+            calls: AtomicUsize::new(0),
+        },
+        ModelId::Mc101.value(),
+    );
+    let snapshot = probe::walk(
+        &client,
+        roland_address_from_linear(BASE).unwrap(),
+        roland_address_from_linear(BASE + 0x40).unwrap(),
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    let first = roland_address_from_linear(BASE).unwrap();
+    let later = roland_address_from_linear(BASE + 0x20).unwrap();
+    assert_eq!(snapshot.bytes.len(), 0x10);
+    assert_eq!(snapshot.bytes.get(&first), Some(&0x11));
+    assert!(!snapshot.bytes.contains_key(&later));
+    assert!(snapshot.unconfirmed_placements > 0);
+}
+
+#[test]
+fn a_confirmation_error_is_recorded_and_the_sweep_continues() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const BASE: u32 = 0x0400_0000;
+    struct FailsOnFollowUp {
+        calls: AtomicUsize,
+    }
+    impl mc_programmer::Transport for FailsOnFollowUp {
+        fn transfer(&self, _request: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            match self.calls.fetch_add(1, Ordering::SeqCst) {
+                0 => Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), BASE, &[0x11; 0x10]).unwrap()),
+                1 => Err(mc_programmer::Error::Midi(
+                    "confirmation failed".to_string(),
+                )),
+                _ => Ok(Vec::new()),
+            }
+        }
+    }
+
+    let client = MCClient::new(
+        FailsOnFollowUp {
+            calls: AtomicUsize::new(0),
+        },
+        ModelId::Mc101.value(),
+    );
+    let snapshot = probe::walk(
+        &client,
+        roland_address_from_linear(BASE).unwrap(),
+        roland_address_from_linear(BASE + 0x20).unwrap(),
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    let first = roland_address_from_linear(BASE).unwrap();
+    assert_eq!(snapshot.bytes.len(), 0x10);
+    assert_eq!(snapshot.bytes.get(&first), Some(&0x11));
+    assert_eq!(snapshot.unconfirmed_placements, 1);
+    assert!(snapshot
+        .failures
+        .iter()
+        .any(|(_, message)| message.contains("confirmation failed")));
+    assert_eq!(snapshot.chunks_probed, 2);
 }
 
 #[test]
@@ -956,10 +1198,8 @@ fn a_dropped_follow_up_frame_does_not_fabricate_an_address() {
     }
     // And any placement resting on silence must say so rather than counting
     // itself among the confirmations.
-    assert!(
-        snapshot.unconfirmed_placements > 0 || snapshot.bytes.is_empty(),
-        "a placement resting on silence must be reported as unconfirmed"
-    );
+    assert!(snapshot.unconfirmed_placements > 0);
+    assert_eq!(snapshot.bytes.get(&0x20000100), Some(&0x50));
 }
 
 #[test]

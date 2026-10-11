@@ -47,12 +47,12 @@ span where 16-byte requests showed an 8-byte hole.
 Consequence: a payload may be laid down contiguously only when the reply is
 exactly as long as the request **and ends within it**. Neither condition alone
 is enough, and even together they are necessary rather than sufficient — see
-"Two things the protocol cannot confirm" below. `probe::walk` splits any shorter reply in
-half and re-probes, down to single bytes, so a byte is placed only where the
-exchange supports it. The cost is one extra request per answered chunk
-(`Snapshot::subdivisions` counts them); the benefit is that sweeps at chunk
-`0x10`, `0x20` and `0x80` of the same range now agree byte for byte, where
-before they disagreed by tens of bytes.
+"Two things the protocol cannot confirm" below. `probe::walk` splits shorter
+replies and re-probes down to single bytes. Ambiguous reply addresses get
+follow-up reads; if a follow-up cannot confirm the original location, bytes are
+retained as unconfirmed, while payloads with no resolvable address are
+discarded. The counters make both cases explicit. Sweeps at chunk `0x10`,
+`0x20` and `0x80` over the same range now agree on placed bytes.
 
 ### What the probe can and cannot confirm
 
@@ -63,14 +63,15 @@ Taking the lower candidate would write a payload `0x80` bytes from where it
 belongs and report it as certain. So whenever the resolution is not forced,
 the sweep asks again from one byte above: that drops the requested address out
 of the candidate set, and the two cases give different answers.
-`Snapshot::confirmations` counts those follow-ups and
-`confirmation_exchanges` what they cost. Both are the normal state, not an
-anomaly: a masked reply almost always has a higher candidate, so nearly every
-answered chunk is confirmed and **a range that answers costs about twice the
-requests the chunk count suggests**. A sweep over mostly-unmapped space costs
-nothing extra, since silence needs no confirming. When a follow-up settles
-nothing, the payload is **discarded** and counted in
-`unprovable_placements` — a non-zero value means the sweep has holes.
+`Snapshot::confirmations` counts placements whose address was confirmed;
+`confirmation_exchanges` counts the follow-up reads they cost. Mapped chunks
+that need disambiguation cost extra requests, while empty primary reads do not.
+
+A silent follow-up, a transport error, or a reply from a different later run
+leaves the original placement unconfirmed. The payload is retained and counted
+in `unconfirmed_placements`; confirmation errors are recorded in `failures`.
+Replies that cannot be resolved, or a climb that exhausts its bound, are
+discarded and counted in `unprovable_placements`.
 
 **Contiguity: not confirmable.** A gap-compressed reply can match the
 requested length exactly — asked for 8 bytes over a span whose middle 4 are
@@ -188,6 +189,12 @@ shows up:
 
 `--csv` gives one row per byte for spreadsheet work.
 
+Snapshots include their model and sweep coverage. Diff requires the same
+model and compares only bytes covered by both sweeps; addresses skipped by
+either range or sampling step are not reported as additions or removals.
+Older snapshots without coverage metadata can be loaded, but must be re-probed
+before diffing. CSV records go to stdout; uncertainty warnings go to stderr.
+
 ### 5. Confirm before believing it
 
 A diff tells you where a byte moved, not what the field means. Before adding
@@ -215,12 +222,11 @@ let before = probe::walk(&client, 0x01000000, 0x01010000, &opts)?.labelled("scen
 // ... change one thing ...
 let after = probe::walk(&client, 0x01000000, 0x01010000, &opts)?.labelled("scene 2");
 
-for run in probe::diff_runs(&probe::diff(&before, &after)) {
+for run in probe::diff_runs(&probe::diff(&before, &after)?) {
     println!("{:08X} +{}", run.address, run.len());
 }
 ```
 
-A [`Snapshot`] records only the bytes the device answered for. An address that
-is absent is *unmapped*, which is not the same as zero — a region that starts
-or stops answering is itself a finding, and `diff` reports it with `--` on the
-missing side.
+A Snapshot records its model, sweep coverage, and the bytes answered for. A
+diff compares only shared coverage; an absent byte there is --, while an
+address never probed by either sweep is ignored.

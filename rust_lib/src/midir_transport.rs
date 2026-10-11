@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use midir::{Ignore, MidiInput, MidiInputConnection, MidiInputPort, MidiOutput, MidiOutputConnection, MidiOutputPort};
 use parking_lot::{Condvar, Mutex};
 
+use crate::addresses::{resolve_reply_location_from, roland_address_to_linear, ReplyLocation};
 use crate::error::{Error, Result};
 use crate::protocol::{
     parse_dt1_view, roland_checksum, universal_device_inquiry, validate_7bit_data, CMD_RQ1, ROLAND_ID, SYSEX_END,
@@ -66,11 +67,7 @@ impl ReplyState {
 enum ExpectedReply {
     NoReply,
     DeviceIdentity,
-    Rq1 {
-        model_id: u8,
-        address: u32,
-        count: u32,
-    },
+    Rq1 { model_id: u8, request_linear: u32 },
 }
 
 fn expected_reply(request: &[u8]) -> Result<ExpectedReply> {
@@ -96,13 +93,11 @@ fn expected_reply(request: &[u8]) -> Result<ExpectedReply> {
     if request[checksum_index] != roland_checksum(&request[8..checksum_index]) {
         return Err(Error::Value("RQ1 request checksum is invalid".to_string()));
     }
-    let address = u32::from_be_bytes([request[8], request[9], request[10], request[11]]);
-    let count =
-        ((request[12] as u32) << 21) | ((request[13] as u32) << 14) | ((request[14] as u32) << 7) | request[15] as u32;
+    let packed_address = u32::from_be_bytes([request[8], request[9], request[10], request[11]]);
+    let request_linear = roland_address_to_linear(packed_address)?;
     Ok(ExpectedReply::Rq1 {
         model_id: request[6],
-        address,
-        count,
+        request_linear,
     })
 }
 
@@ -121,13 +116,16 @@ fn reply_matches(expected: &ExpectedReply, reply: &[u8]) -> bool {
         }
         ExpectedReply::Rq1 {
             model_id,
-            address,
-            count,
+            request_linear,
         } => {
-            let Ok((reply_model, reply_address, data)) = parse_dt1_view(reply) else {
+            let Ok((reply_model, reply_address, _data)) = parse_dt1_view(reply) else {
                 return false;
             };
-            reply_model == *model_id && reply_address == *address && data.len() == *count as usize
+            reply_model == *model_id
+                && matches!(
+                    resolve_reply_location_from(reply_address, *request_linear),
+                    ReplyLocation::Resolved { .. } | ReplyLocation::Ambiguous(_)
+                )
         }
     }
 }
@@ -362,24 +360,34 @@ mod request_match_tests {
     use std::time::Duration;
 
     #[test]
-    fn rq1_accepts_only_matching_valid_dt1_frames() {
-        let request = build_rq1(0x5d, 0x2000_0000, 2).unwrap();
+    fn rq1_accepts_valid_relocated_and_short_dt1_frames() {
+        let packed = 0x2000_0010;
+        let linear = crate::addresses::roland_address_to_linear(packed).unwrap();
+        let request = build_rq1(0x5d, packed, 2).unwrap();
         let expected = expected_reply(&request).unwrap();
-        let valid = build_dt1(0x5d, 0x2000_0000, &[1, 2]).unwrap();
-        assert!(reply_matches(&expected, &valid));
-        assert!(!reply_matches(
+
+        let exact = build_dt1(0x5d, linear, &[1, 2]).unwrap();
+        assert!(reply_matches(&expected, &exact));
+        assert!(reply_matches(
             &expected,
-            &build_dt1(0x5d, 0x2000_0100, &[1, 2]).unwrap()
+            &build_dt1(0x5d, linear, &[1]).unwrap()
+        ));
+        assert!(reply_matches(
+            &expected,
+            &build_dt1(0x5d, linear + 0x10, &[1, 2, 3]).unwrap()
+        ));
+        // A raw address one byte below can still be a valid masked alias above
+        // the request, so let the probe resolve it.
+        assert!(reply_matches(
+            &expected,
+            &build_dt1(0x5d, linear - 1, &[1]).unwrap()
         ));
         assert!(!reply_matches(
             &expected,
-            &build_dt1(0x5e, 0x2000_0000, &[1, 2]).unwrap()
+            &build_dt1(0x5e, linear, &[1, 2]).unwrap()
         ));
-        assert!(!reply_matches(
-            &expected,
-            &build_dt1(0x5d, 0x2000_0000, &[1]).unwrap()
-        ));
-        let mut corrupt = valid;
+
+        let mut corrupt = exact;
         let checksum = corrupt.len() - 2;
         corrupt[checksum] ^= 1;
         assert!(!reply_matches(&expected, &corrupt));
