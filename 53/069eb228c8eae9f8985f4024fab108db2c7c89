@@ -1,0 +1,30 @@
+ROADMAP.md
+  h_0f0df16e3c7bfc 222
+python_lib/mc_programmer/__init__.py
+  h_0f0df16e3c7bfc 44,121
+python_lib/mc_programmer/sequencer.py
+  h_0f0df16e3c7bfc 46-47,210-248
+python_lib/tests/test_mc_programmer.py
+  h_0f0df16e3c7bfc 30,112-144
+rust_lib/src/lib.rs
+  h_0f0df16e3c7bfc 60-61
+rust_lib/src/sequencer.rs
+  h_0f0df16e3c7bfc 268-337
+rust_lib/tests/integration.rs
+  h_0f0df16e3c7bfc 8-11,314-351
+swift_lib/Sources/MCProgrammer/Sequencer.swift
+  h_0f0df16e3c7bfc 175-259
+swift_lib/Tests/MCProgrammerTests/MCProgrammerTests.swift
+  h_0f0df16e3c7bfc 47-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53069eb228c8eae9f8985f4024fab108db2c7c89",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
