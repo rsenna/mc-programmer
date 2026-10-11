@@ -11,9 +11,11 @@ cd rust_lib
 cargo run --features midir --bin mc-probe -- help
 ```
 
-It only ever *reads* from the device. The risk in a probing session is the
-manual front-panel edits you make between dumps, which is why step 1 saves
-the project from the device itself.
+The mc-probe dump command performs RQ1 reads and does not write project
+memory. The scene and clip helpers send Program Changes, changing the active
+selection but not patch data; save the current project before using them. On a
+shared MC-101, run hardware commands through mc101-lock with
+MC101_LOCK_OWNER=mc-programmer/<task>.
 
 ## How the MC answers an RQ1
 
@@ -111,9 +113,10 @@ Survey coarsely first, then dump finely.
 
 ### 1. Save the project from the device
 
-**Use the MC-101's own menu to save the project to its SD card.** Probing
-only ever reads; what is at risk is the front-panel edits you make between
-sweeps, and the device's own save is the only reliable way back.
+**Save the project with the MC-101's own menu before probing.** The dump
+workflow reads device memory; scene/clip helpers send Program Changes that
+change active selection but do not write patch data. Those helpers are state
+changes. The device's save is the reliable way back from front-panel edits.
 
 `mc-probe` deliberately has no `backup` subcommand. `MCClient::read_chunked`
 rejects any reply shorter than the request, and short replies are routine

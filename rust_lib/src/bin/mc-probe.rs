@@ -11,10 +11,10 @@
 //! mc-probe diff     before.json after.json
 //! ```
 //!
-//! Probing only ever *reads*. The front-panel changes an operator makes
-//! between sweeps are the only thing at risk, so save the project to the
-//! device's own SD card first — `Project::dump_from` cannot currently complete
-//! against real hardware (see docs/PROBING.md).
+//! `dump` reads device memory. `scene` and `clip` send Program Changes that
+//! alter the active selection but do not write patch data; save your project
+//! before using them. For a shared MC-101, use `mc101-lock` with
+//! `MC101_LOCK_OWNER=mc-programmer/<task>` when connecting or sending messages.
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -76,8 +76,10 @@ mc-probe — MC address-space explorer
          [--device NAME] [--csv-out FILE]
   diff   BEFORE.json AFTER.json         report every changed byte
          [--csv]
-  scene N [--channel C]                 recall scene N via Program Change
-  clip   TRACK N [--channel C]          recall clip N on TRACK via Program Change
+  scene N [--channel C]                 select a scene via Program Change
+  clip   TRACK N [--channel C]          select a clip via Program Change
+  scene/clip change active selection; save the project before selecting
+  shared MC-101: use mc101-lock with MC101_LOCK_OWNER=mc-programmer/<task>
 
 Addresses are packed Roland hex, with or without 0x. Every byte is 7-bit,
 so 0x...0080 is not a valid address and 0x...0100 is the byte after

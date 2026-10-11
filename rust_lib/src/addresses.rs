@@ -57,7 +57,7 @@ pub fn add_roland_offset(address: u32, byte_offset: u32) -> Result<u32> {
 /// distinct linear addresses arrive as the same four bytes (8, not 16: a
 /// linear address is bounded by 28 bits, so its top byte can never carry bit 7
 /// and those combinations fall outside the space). (Verified on an
-/// MC-101: requests for packed `0x40000080`, `0x40000100` and `0x40020000`,
+/// MC-101: requests for packed `0x40000000`, `0x40000100` and `0x40020000`,
 /// whose linear forms are `0x08000000`, `0x08000080` and `0x08008000`, all
 /// reply `08 00 00 00`. A Roland Clan forum report of request `32 10 00 00`
 /// answering `06 44 00 00` is the same rule — `0x06440000` is that address's
