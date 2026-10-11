@@ -11,7 +11,7 @@ table:
 | Library | Status | Tests |
 |---|---|---|
 | **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 76 / 76 |
-| **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 42 / 42 |
+| **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 44 / 44 |
 | **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 146 / 146 |
 
 All three libraries cover **~389 named ZEN-Core tone parameters** auto-generated
