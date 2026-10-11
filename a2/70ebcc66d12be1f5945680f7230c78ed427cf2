@@ -1,0 +1,30 @@
+CLAUDE.md
+  h_0f0df16e3c7bfc 94
+README.md
+  h_0f0df16e3c7bfc 15,187
+ROADMAP.md
+  h_0f0df16e3c7bfc 197-198
+docs/PROBING.md
+  h_0f0df16e3c7bfc 50-55,66-74,192-197,225,230-232
+rust_lib/src/bin/mc-probe.rs
+  h_0f0df16e3c7bfc 231,234-235,237,240-242,247-250,255-267,269-270,275-276,280-283,291
+rust_lib/src/midir_transport.rs
+  h_0f0df16e3c7bfc 13,70,96-97,100,119,121,124-128,363-366,368-371,373,375,377-383,387,389-390
+rust_lib/src/probe.rs
+  h_0f0df16e3c7bfc 43,50-54,81,140-143,149-210,224-225,325,329-336,340,342-345,349,363-382,389-400,415-470,529-534,646,653-655,657-664,845,899-902,912,977-978,986,988-1005,1007-1015,1017-1019,1022-1027,1031,1036-1037
+rust_lib/tests/probe.rs
+  h_0f0df16e3c7bfc 4,18-21,23,37-44,173-187,257,376,390,394-492,499,519,536,558,580,599,605-625,651,900,904-906,945-1032,1201-1202
+rust_lib/tests/probe_cli.rs
+  h_0f0df16e3c7bfc 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a270ebcc66d12be1f5945680f7230c78ed427cf2",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
