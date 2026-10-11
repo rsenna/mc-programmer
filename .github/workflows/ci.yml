@@ -1,0 +1,44 @@
+name: Offline CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.x"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run offline Python tests
+        env:
+          PYTHONPATH: python_lib
+        run: env -u MC101_DEVICE python -m unittest discover -s python_lib/tests
+
+  swift:
+    name: Swift
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run offline Swift tests
+        run: env -u MC101_DEVICE swift test --package-path swift_lib
+
+  rust:
+    name: Rust (all features)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run offline Rust tests
+        run: env -u MC101_DEVICE cargo test --manifest-path rust_lib/Cargo.toml --all-features
