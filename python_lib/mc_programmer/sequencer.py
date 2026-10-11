@@ -43,6 +43,8 @@ from .addresses import (
     VELOCITY_OFFS,
 )
 
+from .notes import note_name
+
 
 EMPTY_NOTE = 0xFF  # sentinel byte value used for unused note slots
 END_TIME_TIE = 100  # end-time value that ties the note into the next step
@@ -203,6 +205,45 @@ def decode_note_step(raw: Sequence[int]) -> NoteStep:
         substep = SubStep.NONE
 
     return NoteStep(components=components, substep=substep)
+
+
+def format_note_step(raw: Sequence[int]) -> str:
+    """Format one raw 256-byte note step as a hex dump and decoded lane list.
+
+    The raw dump preserves unknown bytes. The decoded section names valid MIDI
+    pitches using Roland's octave convention and reports malformed pitches
+    without hiding the original byte values.
+    """
+    if len(raw) != STEP_SIZE:
+        raise ValueError(f"step record must be exactly {STEP_SIZE} bytes, got {len(raw)}")
+
+    for byte in raw:
+        if not isinstance(byte, int) or not 0 <= byte <= 0xFF:
+            raise ValueError("step record must contain byte values in 0..255")
+
+    step = decode_note_step(raw)
+    lines = [f"MC note step ({STEP_SIZE} bytes)"]
+    for offset in range(0, STEP_SIZE, 16):
+        chunk = " ".join(f"{byte:02X}" for byte in raw[offset : offset + 16])
+        lines.append(f"{offset:04X}: {chunk}")
+
+    lines.append("Decoded lanes:")
+    for lane, component in enumerate(step.components):
+        if component.is_empty:
+            pitch = "empty"
+        elif component.note <= 127:
+            pitch = f"{note_name(component.note)} ({component.note})"
+        else:
+            pitch = f"invalid 0x{component.note:02X}"
+
+        end = "tie" if component.ties_to_next else f"{component.end_cents}c"
+        lines.append(
+            f"{lane:02}: note={pitch}, velocity={component.velocity}, "
+            f"start={component.start_cents:+d}c, end={end}"
+        )
+
+    lines.append(f"Substep: {step.substep.name.lower()} (raw 0x{raw[SUBSTEP_OFFS]:02X})")
+    return "\n".join(lines)
 
 
 # --- Motion lanes -----------------------------------------------------------

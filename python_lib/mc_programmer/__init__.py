@@ -41,6 +41,7 @@ from .sequencer import (
     EMPTY_NOTE,
     encode_note_step,
     decode_note_step,
+    format_note_step,
     pack_nibble_pair,
     unpack_nibble_pair,
 )
@@ -117,6 +118,7 @@ __all__ = [
     "EMPTY_NOTE",
     "encode_note_step",
     "decode_note_step",
+    "format_note_step",
     "pack_nibble_pair",
     "unpack_nibble_pair",
     "Transport",

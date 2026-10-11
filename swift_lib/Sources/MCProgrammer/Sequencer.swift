@@ -172,6 +172,91 @@ public enum NoteStepCodec {
 
         return NoteStep(components: components, substep: substep)
     }
+
+    /// Render a raw 256-byte note step as a hex dump and decoded lane list.
+    /// Unknown bytes remain visible in the raw dump.
+    public static func format(_ raw: [UInt8]) throws -> String {
+        let expected = Int(SequencerMap.stepSize)
+        guard raw.count == expected else {
+            throw MCProgrammerError.valueOutOfRange(
+                "step record must be exactly \(expected) bytes, got \(raw.count)"
+            )
+        }
+
+        let step = try decode(raw)
+        var output = "MC note step (\(raw.count) bytes)\n"
+        output.reserveCapacity(2400)
+        for offset in stride(from: 0, to: raw.count, by: 16) {
+            appendHexOffset(offset, to: &output)
+            output.append(": ")
+            for column in 0..<16 {
+                if column != 0 { output.append(" ") }
+                appendHexByte(raw[offset + column], to: &output)
+            }
+            output.append("\n")
+        }
+
+        output.append("Decoded lanes:\n")
+        for (lane, component) in step.components.enumerated() {
+            if lane < 10 { output.append("0") }
+            output.append(String(lane))
+            output.append(": note=")
+            if component.isEmpty {
+                output.append("empty")
+            } else if let pitch = try? Note.name(of: Int(component.note)) {
+                output.append(pitch)
+                output.append(" (")
+                output.append(String(component.note))
+                output.append(")")
+            } else {
+                output.append("invalid 0x")
+                appendHexByte(component.note, to: &output)
+            }
+
+            output.append(", velocity=")
+            output.append(String(component.velocity))
+            output.append(", start=")
+            if component.startCents >= 0 { output.append("+") }
+            output.append(String(component.startCents))
+            output.append("c, end=")
+            if component.tiesToNext {
+                output.append("tie")
+            } else {
+                output.append(String(component.endCents))
+                output.append("c")
+            }
+            output.append("\n")
+        }
+
+        let substep: String
+        switch step.substep {
+        case .none: substep = "none"
+        case .double: substep = "double"
+        case .triple: substep = "triple"
+        case .quadruple: substep = "quadruple"
+        case .flam: substep = "flam"
+        }
+        output.append("Substep: ")
+        output.append(substep)
+        output.append(" (raw 0x")
+        appendHexByte(raw[Int(NoteStepLayout.substepOffs)], to: &output)
+        output.append(")")
+        return output
+    }
+
+    private static let hexDigits = Array("0123456789ABCDEF")
+
+    private static func appendHexByte(_ byte: UInt8, to output: inout String) {
+        output.append(hexDigits[Int(byte >> 4)])
+        output.append(hexDigits[Int(byte & 0x0F)])
+    }
+
+    private static func appendHexOffset(_ offset: Int, to output: inout String) {
+        output.append(hexDigits[(offset >> 12) & 0x0F])
+        output.append(hexDigits[(offset >> 8) & 0x0F])
+        output.append(hexDigits[(offset >> 4) & 0x0F])
+        output.append(hexDigits[offset & 0x0F])
+    }
 }
 
 // MARK: - Motion lanes

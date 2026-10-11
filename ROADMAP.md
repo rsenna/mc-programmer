@@ -219,7 +219,7 @@ address before the parameter table can be added safely.
       `swift test`, and `cargo test --all-features` on every push
 - [ ] Publish `mc_programmer` to PyPI under a friendly version
 - [ ] Add the Swift package to the Swift Package Index
-- [ ] Hex-dump pretty-printer for debugging (decode a raw 256-byte step
+- [x] Hex-dump pretty-printer for debugging (decode a raw 256-byte step
       record to a human-readable format)
 - [ ] CLI tool — `mc-programmer dump my-project.mctproject` (Python entry point)
 - [ ] Type-stub-only file (`py.typed` marker is in place; could add

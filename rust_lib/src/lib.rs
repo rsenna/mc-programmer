@@ -57,8 +57,8 @@ pub use protocol::{
     build_dt1, build_rq1, model_name, parse_dt1_payload, roland_checksum, universal_device_inquiry, ModelId,
 };
 pub use sequencer::{
-    decode_note_step, encode_note_step, pack_nibble_pair, unpack_nibble_pair, MotionStep, NoteComponent, NoteStep,
-    SubStep, EMPTY_NOTE, END_TIME_TIE,
+    decode_note_step, encode_note_step, format_note_step, pack_nibble_pair, unpack_nibble_pair, MotionStep,
+    NoteComponent, NoteStep, SubStep, EMPTY_NOTE, END_TIME_TIE,
 };
 pub use transport::{NullTransport, Transport};
 pub use zencore::{

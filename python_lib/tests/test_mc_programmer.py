@@ -27,6 +27,7 @@ from mc_programmer import (  # noqa: E402
     build_dt1,
     build_rq1,
     decode_note_step,
+    format_note_step,
     encode_note_step,
     lookup_param,
     parse_dt1_payload,
@@ -107,6 +108,39 @@ class NoteStepTests(unittest.TestCase):
             step.components[0] = NoteComponent(note=60, start_cents=cents)
             decoded = decode_note_step(encode_note_step(step))
             self.assertEqual(decoded.components[0].start_cents, cents)
+
+    def test_format_note_step_shows_hex_and_decoded_lanes(self):
+        raw = bytearray(encode_note_step(NoteStep()))
+        raw[0x10:0x14] = bytes([0x03, 0x0C, 0x08, 0x00])
+        raw[0x30:0x32] = bytes([123, 100])
+        raw[0x40:0x42] = bytes([0x0F, 0x06])
+        raw[0x60:0x62] = bytes([100, 56])
+        raw[0x70] = 2
+        raw[-1] = 0xA5
+
+        rendered = format_note_step(raw)
+
+        self.assertIn("0000: " + " ".join(["00"] * 16), rendered)
+        self.assertIn("0010: 03 0C 08 00", rendered)
+        self.assertIn("00F0: " + " ".join(["00"] * 15 + ["A5"]), rendered)
+        self.assertIn("00: note=C3 (60), velocity=123, start=-10c, end=tie", rendered)
+        self.assertIn("01: note=invalid 0x80, velocity=100, start=+0c, end=56c", rendered)
+        self.assertIn("02: note=empty, velocity=100, start=+0c, end=80c", rendered)
+        self.assertIn("Substep: triple (raw 0x02)", rendered)
+
+    def test_format_note_step_requires_exact_record_size(self):
+        for size in (255, 257):
+            with self.subTest(size=size):
+                with self.assertRaisesRegex(ValueError, "exactly 256 bytes"):
+                    format_note_step(bytes(size))
+
+    def test_format_note_step_rejects_values_outside_byte_range(self):
+        for value in (-1, 256):
+            raw = [0] * 256
+            raw[0] = value
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "byte values in 0..255"):
+                    format_note_step(raw)
 
 
 class MCClientTests(unittest.TestCase):
