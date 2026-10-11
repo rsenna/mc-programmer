@@ -1,0 +1,31 @@
+CLAUDE.md
+  s_a282bc8fb316c0::t_06defb4d45114a 93
+README.md
+  s_a282bc8fb316c0::t_d780cd99e1f3c7 5-6,15,19-23,186
+ROADMAP.md
+  s_a282bc8fb316c0::t_09544f7c514438 107-110,196
+docs/PROBING.md
+  s_a282bc8fb316c0::t_2144d0ad9b7de7 52,66-71,86-87,135-137
+rust_lib/src/bin/mc-probe.rs
+  s_a282bc8fb316c0::t_335c7783267234 155,159,178-180
+rust_lib/src/probe.rs
+  s_a282bc8fb316c0::t_6b4bf22a0f1c6c 176-179,181-187,237,239-291,293-294,297,372,475-477,489-493,660,736-739
+rust_lib/tests/probe.rs
+  s_a282bc8fb316c0::t_0935b447072f5b 241,382,439,508,810-901
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7d17ae645adccc459d66204c69c893a577e0741b",
+  "prompts": {},
+  "sessions": {
+    "s_a282bc8fb316c0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "53115fcb-7d04-4e24-9042-b26390a40d15",
+        "model": "claude-opus-5"
+      },
+      "human_author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
