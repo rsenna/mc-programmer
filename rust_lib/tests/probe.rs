@@ -224,6 +224,9 @@ fn failures_round_trip_through_json() {
         relocated_replies: 0,
         unplaceable_replies: 0,
         subdivisions: 0,
+        truncated_placements: 0,
+        unprovable_placements: 0,
+        assumed_contiguous_placements: 0,
     };
     snapshot.bytes.insert(0x20000000, 0x7f);
 
@@ -235,12 +238,14 @@ fn failures_round_trip_through_json() {
 }
 
 #[test]
-fn a_relocated_reply_is_placed_where_the_device_says() {
-    // Reproduces real MC-101 behaviour: asked about packed 0x40000024 (linear
-    // 0x08000024), it answers for linear 0x08000026 — packed 0x40000026 —
-    // having skipped forward past unmapped bytes. A full-length reply is
-    // placeable, and belongs at the address the device named, not the one
-    // requested.
+fn a_relocated_reply_is_narrowed_until_only_confirmed_bytes_are_placed() {
+    // Real MC-101 behaviour: asked about packed 0x40000024 it answers for
+    // 0x40000026, having skipped forward past unmapped bytes.
+    //
+    // A relocated reply can never satisfy the coverage gate — if it starts
+    // later than the request it cannot also end within it — so the sweep
+    // narrows the request instead of trusting the payload wholesale, and only
+    // the byte the device actually reported an address for is recorded.
     struct SkipsForward;
     impl mc_programmer::Transport for SkipsForward {
         fn transfer(&self, _message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
@@ -256,14 +261,17 @@ fn a_relocated_reply_is_placed_where_the_device_says() {
     let client = MCClient::new(SkipsForward, ModelId::Mc101.value());
     let snapshot = probe::walk(&client, 0x40000024, 0x40000028, &ProbeOptions::gapless(4)).unwrap();
 
-    assert_eq!(snapshot.relocated_replies, 1);
-    assert_eq!(snapshot.unplaceable_replies, 0);
-    assert_eq!(
-        snapshot.subdivisions, 0,
-        "a full-length reply needs no splitting"
+    assert!(
+        snapshot.subdivisions > 0,
+        "a relocated reply must be narrowed, not trusted"
     );
+    assert_eq!(snapshot.unplaceable_replies, 0);
+    // Only the first byte of the payload is confirmed to live at 0x40000026.
     assert_eq!(snapshot.bytes.get(&0x40000026), Some(&0x11));
-    assert_eq!(snapshot.bytes.get(&0x40000029), Some(&0x44));
+    assert!(
+        !snapshot.bytes.contains_key(&0x40000027),
+        "later payload bytes were never confirmed at an address"
+    );
     assert!(
         !snapshot.bytes.contains_key(&0x40000024),
         "the requested address must stay empty when the device answered elsewhere"
@@ -357,6 +365,9 @@ fn diff_reports_addresses_present_on_only_one_side() {
         relocated_replies: 0,
         unplaceable_replies: 0,
         subdivisions: 0,
+        truncated_placements: 0,
+        unprovable_placements: 0,
+        assumed_contiguous_placements: 0,
     };
     before.bytes.insert(0x20000000, 0xaa);
 
@@ -410,6 +421,9 @@ fn diff_runs_join_across_the_packed_address_discontinuity() {
         relocated_replies: 0,
         unplaceable_replies: 0,
         subdivisions: 0,
+        truncated_placements: 0,
+        unprovable_placements: 0,
+        assumed_contiguous_placements: 0,
     };
     before.bytes.insert(0x2000007f, 0x00);
     before.bytes.insert(0x20000100, 0x00);
@@ -475,6 +489,9 @@ fn runs_collapse_contiguous_bytes_and_split_at_gaps() {
         relocated_replies: 0,
         unplaceable_replies: 0,
         subdivisions: 0,
+        truncated_placements: 0,
+        unprovable_placements: 0,
+        assumed_contiguous_placements: 0,
     };
     snapshot.bytes.insert(0x20000000, 1);
     snapshot.bytes.insert(0x20000001, 2);
@@ -594,4 +611,60 @@ fn a_short_reply_is_split_rather_than_laid_down_contiguously() {
             assert_eq!(at, None, "offset {i} is unmapped and must stay absent");
         }
     }
+}
+
+#[test]
+fn a_reply_matching_the_length_but_running_past_the_span_is_not_trusted() {
+    // The hole a length-only check leaves open, and the reason the gate gained
+    // a second condition. Device model: ignore `count`, return every mapped
+    // byte from the first mapped address at or after the request.
+    //
+    // Map, as linear offsets from packed 0x20000000: 0..4 mapped, 4..8
+    // unmapped, 8..12 mapped. Asked for 8 bytes at offset 0, such a device
+    // returns offsets 0,1,2,3,8,9,10,11 — EIGHT bytes, exactly the length
+    // requested. Trusting the length alone places the last four over the hole
+    // at offsets 4..7, silently, with every counter reporting a clean sweep.
+    const BASE: u32 = 0x0400_0000; // linear of packed 0x20000000
+    fn mapped(linear: u32) -> bool {
+        let i = linear - BASE;
+        i < 4 || (8..12).contains(&i)
+    }
+
+    struct IgnoresCount;
+    impl mc_programmer::Transport for IgnoresCount {
+        fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+            let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+            let count = u32::from(message[15]).max(1);
+
+            // Every mapped byte at or after the request, up to `count` of them,
+            // drawn from beyond the span when the span runs short.
+            let offsets: Vec<u32> = (base..BASE + 16)
+                .filter(|&o| mapped(o))
+                .take(count as usize)
+                .collect();
+            let Some(&first) = offsets.first() else {
+                return Ok(Vec::new());
+            };
+            let data: Vec<u8> = offsets.iter().map(|&o| 0x10 + (o - BASE) as u8).collect();
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), first & 0x7f7f_7f7f, &data).unwrap())
+        }
+    }
+
+    let client = MCClient::new(IgnoresCount, ModelId::Mc101.value());
+    let snapshot = probe::walk(
+        &client,
+        0x20000000,
+        0x20000010,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    // The misplacement cannot be prevented — see `probe::walk`. What must not
+    // happen is that it goes unreported: a snapshot carrying assumed-contiguous
+    // runs has to say so, so an operator knows which runs to cross-check.
+    assert!(
+        snapshot.assumed_contiguous_placements > 0,
+        "a contiguous multi-byte placement must be declared an assumption"
+    );
 }

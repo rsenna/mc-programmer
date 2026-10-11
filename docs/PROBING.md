@@ -52,9 +52,31 @@ was actually confirmed at. The cost is extra requests near region edges
 `0x10`, `0x20` and `0x80` of the same range now agree byte for byte, where
 before they disagreed by tens of bytes.
 
-`Snapshot` reports all of this: `relocated_replies`, `subdivisions`, and
-`unplaceable_replies` — the last being replies discarded rather than placed at
-a guessed address. A non-zero `unplaceable_replies` means the sweep has holes.
+### Two things the protocol cannot confirm
+
+Both are reported rather than hidden, because a probe that overstates its
+certainty is worse than one that admits the gap.
+
+**Contiguity.** A gap-compressed reply can match the requested length exactly
+— asked for 8 bytes over a span whose middle 4 are unmapped, a device that
+keeps reading past the span returns 4 from inside and 4 from beyond. Nothing
+in (address, length, count) tells that apart from a clean 8-byte run, and
+per-byte confirmation is unavailable because the MC largely ignores 1-byte
+requests. `assumed_contiguous_placements` counts the runs resting on this
+assumption. Cross-check a suspicious run by re-sweeping at a different
+`chunk`: requests then start at different addresses and compress differently.
+
+**The address itself.** If the device relocated forward by exactly `0x80` (or
+a multiple), the relocated address and the requested one produce the *same*
+masked reply. The nearest candidate is the better hypothesis — the device
+returns the *next* mapped run — but it remains a hypothesis.
+`unprovable_placements` counts those.
+
+`Snapshot` reports all of this: `relocated_replies`, `subdivisions`,
+`unplaceable_replies` (replies discarded rather than placed at a guessed
+address), `truncated_placements`, `unprovable_placements` and
+`assumed_contiguous_placements`. A non-zero `unplaceable_replies` means the
+sweep has holes.
 
 ## Address arithmetic, and why ranges look odd
 

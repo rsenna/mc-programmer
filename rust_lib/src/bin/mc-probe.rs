@@ -24,6 +24,11 @@ use mc_programmer::{MCClient, MidirTransport, Project};
 
 const DEFAULT_DEVICE: &str = "MC-101";
 
+/// Flags that take no value. Everything else beginning with `-` consumes the
+/// next argument, so a value that looks like a flag (`--timeout -1`) is
+/// reported rather than silently ignored.
+const BOOLEAN_FLAGS: &[&str] = &["--csv", "--force", "-h", "--help"];
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
@@ -66,7 +71,7 @@ mc-probe — MC address-space explorer
   ports                                 list MIDI ports
   dump   --start HEX --end HEX -o FILE  dump a packed address range
          [--chunk N] [--step N] [--timeout SECONDS] [--label TEXT]
-         [--device NAME] [--csv FILE]
+         [--device NAME] [--csv-out FILE]
   diff   BEFORE.json AFTER.json         report every changed byte
          [--csv]
   scene N [--channel C]                 recall scene N via Program Change
@@ -150,6 +155,34 @@ fn cmd_dump(args: &[String]) -> Result<(), String> {
         snapshot.chunks_probed,
         began.elapsed().as_secs_f64()
     );
+    if snapshot.subdivisions > 0 || snapshot.truncated_placements > 0 {
+        eprintln!(
+            "  {} request(s) split because a reply could not be shown to cover it{}",
+            snapshot.subdivisions,
+            if snapshot.truncated_placements > 0 {
+                format!(
+                    ", {} payload(s) truncated at the top of the address space",
+                    snapshot.truncated_placements
+                )
+            } else {
+                String::new()
+            }
+        );
+    }
+    if snapshot.assumed_contiguous_placements > 0 || snapshot.unprovable_placements > 0 {
+        eprintln!(
+            "note: {} run(s) assumed contiguous and {} address(es) unproven — the protocol \
+             cannot confirm either. Re-sweep with a different --chunk to cross-check.",
+            snapshot.assumed_contiguous_placements, snapshot.unprovable_placements
+        );
+    }
+    if snapshot.unplaceable_replies > 0 {
+        eprintln!(
+            "warning: {} reply/replies could not be placed and were DISCARDED — this sweep has holes. \
+             Narrow --start/--end or lower --chunk and re-run.",
+            snapshot.unplaceable_replies
+        );
+    }
     if snapshot.chunks_failed > 0 {
         eprintln!(
             "warning: {} chunk(s) replied with something unparseable and were skipped",
@@ -163,7 +196,7 @@ fn cmd_dump(args: &[String]) -> Result<(), String> {
         }
     }
 
-    if let Some(csv_path) = opts.value("--csv") {
+    if let Some(csv_path) = opts.value("--csv-out") {
         std::fs::write(&csv_path, snapshot.to_csv()).map_err(|e| e.to_string())?;
         eprintln!("csv -> {csv_path}");
     }
@@ -205,6 +238,13 @@ fn cmd_diff(args: &[String]) -> Result<(), String> {
 }
 
 fn describe(path: &str, snapshot: &Snapshot) {
+    if snapshot.unplaceable_replies > 0 {
+        println!(
+            "{path}: warning — {} reply/replies were discarded as unplaceable, so this \
+             snapshot has holes unrelated to the device's state",
+            snapshot.unplaceable_replies
+        );
+    }
     if snapshot.chunks_failed > 0 {
         println!(
             "{path}: warning — {} chunk(s) failed during this sweep, so some \
@@ -345,20 +385,25 @@ impl Args {
         let mut i = 0;
         while i < args.len() {
             let arg = &args[i];
-            if arg.starts_with('-') {
-                match args.get(i + 1) {
-                    Some(next) if !next.starts_with('-') => {
-                        parsed.pairs.push((arg.clone(), next.clone()));
-                        i += 2;
-                    }
-                    _ => {
-                        parsed.flags.push(arg.clone());
-                        i += 1;
-                    }
-                }
-            } else {
+            if !arg.starts_with('-') {
                 parsed.positionals.push(arg.clone());
                 i += 1;
+                continue;
+            }
+            // Flags that take no value must not swallow the positional that
+            // follows them: `diff --csv before.json after.json` has to keep
+            // both paths, and `restore --force backup.json` the one path.
+            if BOOLEAN_FLAGS.contains(&arg.as_str()) {
+                parsed.flags.push(arg.clone());
+                i += 1;
+                continue;
+            }
+            match args.get(i + 1) {
+                Some(next) => {
+                    parsed.pairs.push((arg.clone(), next.clone()));
+                    i += 2;
+                }
+                None => return Err(format!("{arg} needs a value")),
             }
         }
         Ok(parsed)

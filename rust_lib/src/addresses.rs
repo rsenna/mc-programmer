@@ -90,45 +90,75 @@ pub fn reply_address_candidates(reply_address: u32) -> Vec<u32> {
 /// Where a DT1 reply's data actually lives, resolved against the request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReplyLocation {
-    /// Exactly one candidate falls inside the requested span. `linear` is the
-    /// data's linear start address; `relocated` is true when the device moved
-    /// forward from the address asked for, which it does to skip unmapped
-    /// bytes.
-    Resolved { linear: u32, relocated: bool },
-    /// Several candidates fit and no rule picks between them. Not currently
-    /// produced — [`resolve_reply_location`] takes the nearest candidate at or
-    /// after the request — but kept so a stricter caller can distinguish
-    /// "resolved by a rule" from "resolved uniquely".
+    /// The lowest candidate at or after the request. `linear` is the data's
+    /// linear start address; `relocated` is true when the device moved forward
+    /// from the address asked for, which it does to skip unmapped bytes.
+    ///
+    /// `provable` is false when a higher candidate also fits, so the masking
+    /// could not be inverted with certainty — see
+    /// [`resolve_reply_location`]. The bytes are still the best available
+    /// hypothesis, but a sweep must report how many of its placements rest on
+    /// one.
+    Resolved {
+        linear: u32,
+        relocated: bool,
+        provable: bool,
+    },
+    /// Reserved: no rule currently returns this. Resolution reports
+    /// uncertainty through `Resolved { provable: false }` instead, since the
+    /// device's "next mapped run" behaviour always makes the nearest candidate
+    /// the leading hypothesis rather than leaving a genuine tie.
     Ambiguous(Vec<u32>),
     /// No candidate falls inside the requested span. Either the reply belongs
     /// to a different request, or the device did something unmodelled.
     Unexplained,
 }
 
+/// Smallest distance between two candidates of the same masked reply.
+///
+/// Candidates differ by having bit 7 set in some byte, so the closest two are
+/// `0x80` apart.
+pub const CANDIDATE_SPACING: u32 = 0x80;
+
 /// Resolve a DT1 reply's masked address against the request that provoked it.
 ///
 /// An RQ1 behaves like "return the next mapped run at or after this address",
 /// with the count as a hint rather than a bound: an MC-101 asked about packed
 /// `0x40000020` for 16 bytes answered for `0x40000026`, and asked for 8 bytes
-/// from `0x40000020` answered for `0x4000002E` — past the end of the span.
-/// So a candidate is accepted when it is at or after the requested address,
-/// and the nearest one forward wins, since the device returns the *next*
-/// mapped bytes rather than an arbitrary later run.
+/// from `0x40000020` answered for `0x4000002E` — past the end of the span. So
+/// the answer is the lowest candidate at or after the request.
 ///
-/// Anything with no candidate at or after the request is reported rather than
-/// guessed: placing a payload at the wrong address produces an address map
-/// that looks plausible and is wrong.
-pub fn resolve_reply_location(reply_address: u32, request_linear: u32, _count: u32) -> ReplyLocation {
-    match reply_address_candidates(reply_address)
+/// # This cannot always be proven
+///
+/// The masking is not always invertible, even with the request in hand. If the
+/// device relocated forward by exactly [`CANDIDATE_SPACING`] (or a multiple),
+/// the relocated address and the request produce the *same* masked reply, and
+/// nothing in the exchange distinguishes them: asked at linear `0x100`, a
+/// device that truly answered for `0x180` sends the same four bytes as one
+/// that answered for `0x100`.
+///
+/// Such a resolution is returned with `provable: false`. It is the best
+/// available hypothesis — the device answers with the *next* mapped run, so
+/// the nearest candidate is the likelier one — but it is a hypothesis, and
+/// callers must carry that uncertainty rather than bury it. A
+/// confirming 1-byte read does not settle it: the MC largely ignores
+/// single-byte requests, so silence from one proves nothing.
+///
+/// `provable: true` means no other candidate is at or after the request, so
+/// the answer is forced.
+pub fn resolve_reply_location(reply_address: u32, request_linear: u32) -> ReplyLocation {
+    let forward: Vec<u32> = reply_address_candidates(reply_address)
         .into_iter()
         .filter(|&candidate| candidate >= request_linear)
-        .min()
-    {
-        Some(linear) => ReplyLocation::Resolved {
+        .collect();
+
+    match forward.first() {
+        None => ReplyLocation::Unexplained,
+        Some(&linear) => ReplyLocation::Resolved {
             linear,
             relocated: linear != request_linear,
+            provable: forward.len() == 1,
         },
-        None => ReplyLocation::Unexplained,
     }
 }
 

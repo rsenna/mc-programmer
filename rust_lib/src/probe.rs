@@ -75,8 +75,12 @@ pub const MAX_RECORDED_FAILURES: usize = 64;
 /// How a walk reads a range.
 #[derive(Debug, Clone, Copy)]
 pub struct ProbeOptions {
-    /// Bytes per RQ1. Must be 1..=[`MCClient::CHUNK_SIZE`] and divide 0x80 so
-    /// that a chunk never straddles a 7-bit byte boundary.
+    /// Bytes per RQ1. Must be 1..=[`MAX_CHUNK`] and divide `0x80`, which keeps
+    /// it a power of two so that halving during subdivision stays exact.
+    ///
+    /// It does **not** stop a chunk straddling a 7-bit byte boundary — nothing
+    /// constrains the start address to be `0x80`-aligned, and straddling is
+    /// harmless anyway because the walker works in linear addresses.
     pub chunk: u32,
     /// Linear distance between chunk starts. Equal to `chunk` for a gapless
     /// sweep; larger to sample sparsely when first bracketing a region.
@@ -115,7 +119,7 @@ impl ProbeOptions {
         }
         if max % self.chunk != 0 {
             return Err(Error::Value(format!(
-                "probe chunk {} must divide 0x{max:X} so a chunk never crosses a 7-bit boundary",
+                "probe chunk {} must divide 0x{max:X}, so that halving it during subdivision stays exact",
                 self.chunk
             )));
         }
@@ -153,7 +157,9 @@ pub struct Snapshot {
     /// happens — a single garbled reply must not discard minutes of work —
     /// and the addresses land in [`failures`](Snapshot::failures).
     pub chunks_failed: usize,
-    /// Address and error text for each unparseable reply, in sweep order.
+    /// Address and error text for each reply the sweep could not use —
+    /// unparseable frames and replies whose address could not be resolved — in
+    /// sweep order, capped at [`MAX_RECORDED_FAILURES`].
     pub failures: Vec<(u32, String)>,
     /// Replies the device moved forward from the requested address, which it
     /// does to skip unmapped bytes. Normal near a region edge; the bytes are
@@ -164,8 +170,25 @@ pub struct Snapshot {
     /// address, so a non-zero count means the sweep has holes — refine the
     /// range or chunk size and re-run.
     pub unplaceable_replies: usize,
-    /// Requests the sweep had to split because the reply came back shorter
-    /// than asked for. Expected around the edges of mapped regions; the cost
+    /// Multi-byte payloads laid down contiguously on the assumption that the
+    /// device did not gap-compress them. The protocol provides no way to
+    /// confirm this, so a non-zero count means that many runs in this snapshot
+    /// could in principle be a mapped run from further on, squeezed into an
+    /// apparently contiguous span. Cross-check a suspicious run by sweeping it
+    /// again at a smaller `chunk`, which starts requests at different
+    /// addresses and so compresses differently.
+    pub assumed_contiguous_placements: usize,
+    /// Placements whose address could not be proven, because the reply's
+    /// masked address fits both the requested address and one `0x80` further
+    /// on. The bytes are recorded as the leading hypothesis; a non-zero count
+    /// means that many of this snapshot's addresses are not certain. See
+    /// [`crate::addresses::resolve_reply_location`].
+    pub unprovable_placements: usize,
+    /// Payloads cut short because they ran past the top of the 28-bit address
+    /// space. Expected to be zero everywhere except the very end of the space.
+    pub truncated_placements: usize,
+    /// Requests the sweep had to split because the reply could not be shown to
+    /// cover its request. Expected around the edges of mapped regions; the cost
     /// of placing every byte at an address it was actually confirmed at.
     pub subdivisions: usize,
 }
@@ -202,6 +225,29 @@ impl DiffRun {
 
     pub fn is_empty(&self) -> bool {
         self.after.is_empty()
+    }
+}
+
+/// Record a failure, keeping at most [`MAX_RECORDED_FAILURES`] of them.
+fn record_failure(snapshot: &mut Snapshot, address: u32, message: String) {
+    if snapshot.failures.len() < MAX_RECORDED_FAILURES {
+        snapshot.failures.push((address, message));
+    }
+}
+
+/// Write a payload into the snapshot at `base`.
+///
+/// Bytes that would fall outside the 28-bit address space are dropped rather
+/// than propagated as an error: a sweep takes minutes, and aborting it over a
+/// payload that runs off the top of the space would throw away everything
+/// collected so far — the same policy applied to unparseable frames.
+fn place(snapshot: &mut Snapshot, base: u32, data: &[u8]) {
+    for (i, &byte) in data.iter().enumerate() {
+        let Ok(address) = roland_address_from_linear(base + i as u32) else {
+            snapshot.truncated_placements += 1;
+            return;
+        };
+        snapshot.bytes.insert(address, byte);
     }
 }
 
@@ -244,6 +290,9 @@ pub fn walk_with_progress<T: Transport>(
         relocated_replies: 0,
         unplaceable_replies: 0,
         subdivisions: 0,
+        truncated_placements: 0,
+        unprovable_placements: 0,
+        assumed_contiguous_placements: 0,
     };
 
     // Work stack of (linear start, byte count) still to resolve. A short
@@ -285,58 +334,84 @@ pub fn walk_with_progress<T: Transport>(
         // Where does this payload actually live? The reply reports the data's
         // linear address with every byte masked to 7 bits, so the request has
         // to disambiguate it.
-        let (base, relocated) = match resolve_reply_location(message.address, start_linear, count) {
-            ReplyLocation::Resolved { linear, relocated } => (linear, relocated),
+        let (base, relocated, provable) = match resolve_reply_location(message.address, start_linear) {
+            ReplyLocation::Resolved {
+                linear,
+                relocated,
+                provable,
+            } => (linear, relocated, provable),
             ReplyLocation::Ambiguous(candidates) => {
                 snapshot.unplaceable_replies += 1;
-                if snapshot.failures.len() < MAX_RECORDED_FAILURES {
-                    snapshot.failures.push((
-                        address,
-                        format!(
-                            "reply address 0x{:08X} stays ambiguous after 7-bit masking ({} candidates fit)",
-                            message.address,
-                            candidates.len()
-                        ),
-                    ));
-                }
+                record_failure(
+                    &mut snapshot,
+                    address,
+                    format!(
+                        "reply address 0x{:08X} is ambiguous ({} candidates)",
+                        message.address,
+                        candidates.len()
+                    ),
+                );
                 progress(address, 0);
                 continue;
             }
             ReplyLocation::Unexplained => {
                 snapshot.unplaceable_replies += 1;
-                if snapshot.failures.len() < MAX_RECORDED_FAILURES {
-                    snapshot.failures.push((
-                        address,
-                        format!(
-                            "reply address 0x{:08X} resolves to nothing inside the requested span",
-                            message.address
-                        ),
-                    ));
-                }
+                record_failure(
+                    &mut snapshot,
+                    address,
+                    format!(
+                        "reply address 0x{:08X} resolves to nothing at or after the requested address",
+                        message.address
+                    ),
+                );
                 progress(address, 0);
                 continue;
             }
         };
+        if !provable {
+            snapshot.unprovable_placements += 1;
+        }
         if relocated {
             snapshot.relocated_replies += 1;
         }
 
-        // The decisive rule. A reply as long as the request covers the span
-        // byte for byte, so it can be laid down contiguously. A SHORTER reply
-        // cannot: the MC squeezes the holes out and returns only the mapped
-        // bytes concatenated, so byte i of the payload is not necessarily
-        // byte i of the span. (Measured: a 0x80-byte request returned 60
-        // contiguous-looking bytes over a span where 16-byte requests showed
-        // an 8-byte hole.) Placing those contiguously is what made sweeps at
-        // different chunk sizes disagree. Split instead, until a request comes
-        // back whole or shrinks to the single byte that settles it.
-        let requested_whole = message.data.len() as u32 == count;
-        if requested_whole || count == 1 {
-            for (i, &byte) in message.data.iter().enumerate() {
-                let byte_address = roland_address_from_linear(base + i as u32)?;
-                snapshot.bytes.insert(byte_address, byte);
+        // Can this payload be laid down contiguously from `base`?
+        //
+        // Two necessary conditions: it is as long as the request, and it does
+        // not end past the request. The second is not implied by the first,
+        // because the MC may answer past the end of the span.
+        //
+        // They are NOT sufficient, and cannot be made so. The device
+        // gap-compresses a partly-mapped span — returning only the mapped
+        // bytes, concatenated — and a gap-compressed payload can match the
+        // requested length exactly: asked for 8 bytes over a span whose middle
+        // 4 are unmapped, a device that keeps reading past the span returns 4
+        // bytes from inside it and 4 from beyond, totalling 8. Nothing in
+        // (address, length, count) distinguishes that from a clean 8-byte run,
+        // and the obvious cross-check — confirming each byte with its own
+        // 1-byte request — is not available: the MC largely ignores
+        // single-byte requests, so silence from one proves nothing.
+        //
+        // So a multi-byte contiguous placement is the leading hypothesis, not
+        // a fact, and `assumed_contiguous_placements` counts how many of them
+        // a snapshot rests on. Short or over-long replies are still narrowed,
+        // which is what keeps the common case honest.
+        let reach = base.saturating_add(message.data.len() as u32);
+        let covers_request = message.data.len() as u32 == count && reach <= start_linear.saturating_add(count);
+
+        if covers_request {
+            if message.data.len() > 1 {
+                snapshot.assumed_contiguous_placements += 1;
             }
+            place(&mut snapshot, base, &message.data);
             progress(address, message.data.len());
+        } else if count == 1 {
+            // One byte was asked for and the device answered at `base`, so
+            // only that first byte is confirmed there; the rest of the payload
+            // is whatever followed it in the device's own layout and its
+            // addresses are not established.
+            place(&mut snapshot, base, &message.data[..1]);
+            progress(address, 1);
         } else {
             let half = count / 2;
             snapshot.subdivisions += 1;
@@ -448,6 +523,9 @@ impl Snapshot {
             "relocated_replies": self.relocated_replies,
             "unplaceable_replies": self.unplaceable_replies,
             "subdivisions": self.subdivisions,
+            "truncated_placements": self.truncated_placements,
+            "unprovable_placements": self.unprovable_placements,
+            "assumed_contiguous_placements": self.assumed_contiguous_placements,
             "failures": self
                 .failures
                 .iter()
@@ -514,6 +592,18 @@ impl Snapshot {
                 .and_then(Value::as_u64)
                 .unwrap_or(0) as usize,
             subdivisions: v.get("subdivisions").and_then(Value::as_u64).unwrap_or(0) as usize,
+            truncated_placements: v
+                .get("truncated_placements")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize,
+            unprovable_placements: v
+                .get("unprovable_placements")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize,
+            assumed_contiguous_placements: v
+                .get("assumed_contiguous_placements")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize,
             failures: v
                 .get("failures")
                 .and_then(Value::as_array)

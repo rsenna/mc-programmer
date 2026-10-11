@@ -60,7 +60,6 @@ impl LoopbackTransport {
         }
     }
 
-    /// Pre-load a region of the address space (useful in tests).
     /// Report reply addresses the way a real MC does: the data's **linear**
     /// address with every byte masked to 7 bits, instead of echoing back the
     /// packed address that was requested.
@@ -69,11 +68,15 @@ impl LoopbackTransport {
     /// packed echo. Turn it on for anything that maps replies back to
     /// addresses — see [`crate::probe`] — so the fake can actually exercise
     /// that mapping.
+    ///
+    /// Clones share one address space, so this also affects every existing
+    /// clone of the transport, not just the returned value.
     pub fn with_hardware_reply_addresses(self) -> Self {
         self.inner.lock().hardware_reply_addresses = true;
         self
     }
 
+    /// Pre-load a region of the address space (useful in tests).
     pub fn preload(&self, address: u32, bytes: &[u8]) {
         let mut inner = self.inner.lock();
         for (i, &b) in bytes.iter().enumerate() {

@@ -132,15 +132,25 @@ impl<T: Transport> MCClient<T> {
     ///
     /// `Ok(None)` means the device did not reply at all.
     pub fn read_dt1(&self, address: u32, count: u32, timeout: f64) -> Result<Option<DT1Message>> {
+        let msg = build_rq1(self.model_id, address, count)?;
         if count == 0 {
             return Ok(None);
         }
-        let msg = build_rq1(self.model_id, address, count)?;
         let reply = self.transport.transfer(&msg, timeout)?;
         if reply.is_empty() {
             return Ok(None);
         }
-        Ok(Some(parse_dt1_payload(&reply)?))
+        let response = parse_dt1_payload(&reply)?;
+        // Same model check `read` performs. Without it a DT1 from another
+        // Roland device sharing the bus would be accepted, its address
+        // resolved against our request, and its bytes recorded as MC content.
+        if reply[6] != self.model_id {
+            return Err(Error::Midi(format!(
+                "DT1 model ID does not match request: expected 0x{:02X}, got 0x{:02X}",
+                self.model_id, reply[6]
+            )));
+        }
+        Ok(Some(response))
     }
 
     /// Send 7-bit data to a packed Roland address in a DT1 message.
