@@ -39,6 +39,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
       - name: Run offline Rust tests
-        run: env -u MC101_DEVICE cargo test --manifest-path rust_lib/Cargo.toml --all-features
+        run: env -u MC101_DEVICE cargo test --manifest-path rust_lib/Cargo.toml --all-features --locked
