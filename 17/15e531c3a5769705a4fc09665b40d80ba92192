@@ -1,0 +1,20 @@
+ROADMAP.md
+  h_0f0df16e3c7bfc 5-7,293
+rust_lib/src/client.rs
+  h_0f0df16e3c7bfc 21-22,79-81,88-92,110-122,127-128
+rust_lib/src/lib.rs
+  h_0f0df16e3c7bfc 47-48
+rust_lib/tests/reply_address.rs
+  h_0f0df16e3c7bfc 3-4,9-11,16-18,130,179,184-223
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1715e531c3a5769705a4fc09665b40d80ba92192",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
