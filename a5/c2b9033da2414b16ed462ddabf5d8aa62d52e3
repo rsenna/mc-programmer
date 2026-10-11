@@ -1,0 +1,14 @@
+README.md
+  h_0f0df16e3c7bfc 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5c2b9033da2414b16ed462ddabf5d8aa62d52e3",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
