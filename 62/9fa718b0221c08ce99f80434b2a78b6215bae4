@@ -1,0 +1,16 @@
+rust_lib/README.md
+  h_0f0df16e3c7bfc 50-54
+rust_lib/src/midir_transport.rs
+  h_0f0df16e3c7bfc 32,36-42,45-49,53,77,156-159,248-251,269-271,378,415-433
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "629fa718b0221c08ce99f80434b2a78b6215bae4",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
