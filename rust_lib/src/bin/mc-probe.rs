@@ -362,7 +362,7 @@ impl Args {
             }
             // Flags that take no value must not swallow the positional that
             // follows them: `diff --csv before.json after.json` has to keep
-            // both paths, and `restore --force backup.json` the one path.
+            // both paths rather than consuming the first as its value.
             if BOOLEAN_FLAGS.contains(&arg.as_str()) {
                 parsed.flags.push(arg.clone());
                 i += 1;

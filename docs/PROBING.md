@@ -12,8 +12,8 @@ cargo run --features midir --bin mc-probe -- help
 ```
 
 It only ever *reads* from the device. The risk in a probing session is the
-manual front-panel edits you make between dumps, which is why step 1 is a
-backup.
+manual front-panel edits you make between dumps, which is why step 1 saves
+the project from the device itself.
 
 ## How the MC answers an RQ1
 
@@ -102,15 +102,27 @@ Survey coarsely first, then dump finely.
 
 ## Procedure
 
-### 1. Back up the device
+### 1. Save the project from the device
 
-```bash
-cargo run --features midir --bin mc-probe -- backup device-backup.json
+**Use the MC-101's own menu to save the project to its SD card.** Probing
+only ever reads; what is at risk is the front-panel edits you make between
+sweeps, and the device's own save is the only reliable way back.
+
+`mc-probe` deliberately has no `backup` subcommand. `MCClient::read_chunked`
+rejects any reply shorter than the request, and short replies are routine
+here — gap compression and forward relocation both produce them — so
+`Project::dump_from` cannot complete against real hardware. Verified on an
+MC-101:
+
+```text
+mc-probe: chunk at 0x10000800 has 0 bytes; expected 32
 ```
 
-A few minutes — it walks every track, clip, note/motion/pitch-bend lane and
-tone. Keep the file until the session is over. `restore device-backup.json`
-puts it all back.
+That strictness is not simply a bug to revert: before it, short chunks were
+zero-filled, and `Project::load_into` wrote those zeros back to the device on
+restore. Both behaviours are wrong, and fixing it properly means representing
+absent bytes explicitly in `Project` rather than choosing between corrupting a
+restore and failing a dump.
 
 ### 2. Survey which regions answer at all
 

@@ -111,9 +111,17 @@ sub-block. Both are now in the framework:
 - [x] `MCClient::read_with_timeout` / `read_dt1`
 - [x] `LoopbackTransport::with_hardware_reply_addresses` — opt-in faithful
       reply addressing, so the fake can exercise reply→address mapping
-- [x] `mc-probe` CLI with `ports` / `dump` / `diff` / `scene` / `clip` /
-      `backup` / `restore`, and `examples/raw_reply.rs` for frame-level
-      debugging
+- [x] `mc-probe` CLI with `ports` / `dump` / `diff` / `scene` / `clip`, and
+      `examples/raw_reply.rs` for frame-level debugging
+
+A whole-device backup is **not** among them: `read_chunked` rejects any reply
+shorter than the request, and short replies are routine on real hardware
+(verified on an MC-101: `chunk at 0x10000800 has 0 bytes; expected 32`), so
+`Project::dump_from` cannot complete against a device. The strict check fixed
+a real destructive bug — zero-filled chunks were being written back by
+`load_into` — so neither the old nor the new behaviour is right; absent bytes
+need representing explicitly. Until then, save the project from the device's
+own menu to its SD card.
 - [x] Procedure: [`docs/PROBING.md`](docs/PROBING.md)
 
 Rust only so far — the Python and Swift ports do not have it yet.
