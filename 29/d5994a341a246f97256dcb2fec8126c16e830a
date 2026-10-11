@@ -1,0 +1,18 @@
+docs/PROBING.md
+  h_0f0df16e3c7bfc 14-18,116-119
+rust_lib/src/addresses.rs
+  h_0f0df16e3c7bfc 60
+rust_lib/src/bin/mc-probe.rs
+  h_0f0df16e3c7bfc 14-17,79-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29d5994a341a246f97256dcb2fec8126c16e830a",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
