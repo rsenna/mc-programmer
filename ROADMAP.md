@@ -154,9 +154,9 @@ sub-block. Both are now in the framework:
 ### Tests
 
 - [x] Python: 76 tests via `unittest`, all passing
-- [x] Swift: 42 tests via `XCTest`, all passing, runs in ~40 seconds
-      (project round-trip dominates the time — exercises ~15 KB per tone
-      through chunked I/O)
+- [x] Swift: 44 tests via XCTest, all passing; full suite runs in ~8 seconds
+      (the file round-trip uses a compact fixture; the full dump/restore
+      integration path remains covered)
 - [x] Rust: 146 tests via `cargo test --all-features`, all passing
 
 ---

@@ -30,7 +30,7 @@ mc-programmer/
 ├── swift_lib/           Swift Package
 │   ├── Sources/MCProgrammer/ library source
 │   ├── Examples/        executable target with bundled examples
-│   └── Tests/           42-test XCTest suite
+│   └── Tests/           44-test XCTest suite
 ├── rust_lib/            Rust crate
 │   ├── src/             library source
 │   ├── examples/        runnable examples (LoopbackTransport)
@@ -74,7 +74,7 @@ swift test
 swift run MCProgrammerExamples
 ```
 
-42 tests, ~8 seconds in a local run. The full dump/restore path remains
+44 tests, ~8 seconds in a local run. The full dump/restore path remains
 covered; file serialization uses a compact fixture. Linux builds remain
 supported because CoreMIDI-only code is conditionally compiled.
 

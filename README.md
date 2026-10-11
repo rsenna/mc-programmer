@@ -117,7 +117,7 @@ mc-programmer/
 │   ├── Package.swift
 │   ├── Sources/MCProgrammer/       ← library source
 │   ├── Examples/              ← executable target with bundled examples
-│   └── Tests/MCProgrammerTests/    ← XCTest suite (42 tests)
+│   └── Tests/MCProgrammerTests/    ← XCTest suite (44 tests)
 │
 ├── rust_lib/                 ← Rust crate (mc-programmer)
 │   ├── README.md             ← Rust-specific guide
@@ -170,7 +170,7 @@ swift test
 swift run MCProgrammerExamples           # runs the bundled offline examples
 ```
 
-42 tests; ~8 seconds in a local run. The full dump/restore integration test
+44 tests; ~8 seconds in a local run. The full dump/restore integration test
 remains; the file round-trip test uses a compact project fixture.
 
 ### Rust
