@@ -5,8 +5,8 @@ different lengths and tones. Pick whichever fits the surface you're
 filling out — GitHub "About" field, README opener, social post,
 package index listing, conference talk abstract.
 
-Every variant below describes the same project: `mc-programmer`, the
-parallel Python + Swift libraries for the Roland MC-101 / MC-707 / MV-1
+Every variant below describes the same project: `mc-programmer`, the parallel
+Python + Swift + Rust libraries for the Roland MC-101 / MC-707 / MV-1
 grooveboxes.
 
 ---
@@ -17,22 +17,23 @@ The "About" field on a repo's main page caps at ~350 characters and is
 what shows up in GitHub search results, topic listings, and the social
 preview card.
 
-> **Python and Swift libraries for programming the Roland MC-101, MC-707
-> and MV-1 grooveboxes over MIDI System Exclusive — sequencer, ZEN-Core
-> synth parameters, scenes, clips, and full project save/restore.**
+> **Python, Swift, and Rust libraries for programming the Roland MC-101,
+> MC-707 and MV-1 grooveboxes over MIDI System Exclusive — sequencer,
+> ZEN-Core synth parameters, scenes, clips, and full project save/restore.**
 
-*279 chars. Says exactly what it is, what platforms it covers, what
+*209 chars. Says exactly what it is, what platforms it covers, what
 hardware it targets, and what it can do. Won't get cut off anywhere.*
+
 
 ### Slightly punchier alternative
 
 > **Stop menu-diving on your Roland MC-707 / MC-101 / MV-1. Read and
 > write any sequencer step, edit ~389 ZEN-Core synth parameters, switch
-> scenes and clips, and back up whole projects from Python or Swift
+> scenes and clips, and back up whole projects from Python, Swift, or Rust
 > over MIDI Sys-Ex.**
 
 *Calls out the pain point musicians actually feel ("menu-diving") and
-gives a concrete number for the parameter coverage. ~280 chars.*
+gives a concrete number for the parameter coverage. 225 chars.*
 
 ---
 
@@ -44,7 +45,7 @@ the README, or anywhere a single concise sentence is wanted.
 > **Code-driven sound design and pattern programming for the Roland MC
 > family.**
 
-*72 chars. The shortest variant that still tells the reader what the
+*74 chars. The shortest variant that still tells the reader what the
 project does and which hardware it targets.*
 
 ---
@@ -54,15 +55,14 @@ project does and which hardware it targets.*
 For the first paragraph of the project README, where you have room to
 set expectations and mention the offline development story.
 
-> **`mc-programmer`** is a pair of parallel libraries — one Python, one
-> Swift — that talk to the Roland MC-101, MC-707, and MV-1 grooveboxes
-> over MIDI System Exclusive. You can read and write any sequencer
-> step, change any of ~389 ZEN-Core synth parameters, switch scenes
-> and clips, dump and restore individual sounds or entire projects,
-> and drive the device from any code that can send MIDI. Both
-> libraries share the same data model, the same parameter table, and a
-> `LoopbackTransport` in-memory fake device so you can develop and
-> test without hardware.
+> **`mc-programmer`** is a set of three parallel libraries — Python,
+> Swift, and Rust — that talk to the Roland MC-101, MC-707, and MV-1
+> grooveboxes over MIDI System Exclusive. You can read and write any
+> sequencer step, change any of ~389 ZEN-Core synth parameters, switch scenes
+> and clips, dump and restore individual sounds or entire projects, and drive
+> the device from any code that can send MIDI. All three libraries share the
+> same data model, parameter table, and `LoopbackTransport` in-memory fake
+> device so you can develop and test without hardware.
 
 *Three sentences, comprehensive, sets expectations, mentions the
 offline development story.*
@@ -75,15 +75,15 @@ For Mastodon, Bluesky, Hacker News title, link-roundup blog, etc.
 
 > **`mc-programmer`**: the sound librarian / pattern editor / MIDI
 > Sys-Ex toolkit Roland never shipped for the MC-101 and MC-707.
-> Python and Swift, MIT-licensed, no menu diving.
+> Python, Swift, and Rust; MIT-licensed; no menu diving.
 
-*~170 chars. Fits in a Mastodon post or HN title with room for a link.
+*176 chars. Fits in a Mastodon post or HN title with room for a link.
 The "Roland never shipped" framing positions it clearly against the
 PG-200 / PG-800 hardware programmer precedent.*
 
 ### Hacker News title alternative
 
-> **Show HN: `mc-programmer` — Python/Swift libraries for the Roland
+> **Show HN: `mc-programmer` — Python/Swift/Rust libraries for the Roland
 > MC-707 and MC-101 grooveboxes**
 
 *"Show HN" is the standard prefix for posting your own project; this
@@ -105,15 +105,22 @@ it as the body of a longer `[project.long_description]` section.)
 > MIDI System Exclusive, from Python. Built on a pluggable transport
 > protocol with a CoreMIDI / `python-rtmidi` backend, plus a
 > `LoopbackTransport` in-memory fake device for offline development
-> and CI. Companion Swift library available.**
+> and CI. Companion Swift and Rust libraries available.**
 
 ### Swift Package Index description
 
 > **Native Swift library for programming the Roland MC-101, MC-707 and
 > MV-1 grooveboxes over MIDI System Exclusive. CoreMIDI transport,
 > ~389 ZEN-Core synth parameters, sequencer step encode/decode,
-> tone-preset and full-project save/restore. Companion Python library
-> available.**
+> tone-preset and full-project save/restore. Companion Python and Rust
+> libraries available.**
+
+### crates.io description
+
+> **Rust library for programming the Roland MC-101, MC-707, and MV-1 over
+> MIDI System Exclusive. Includes the full sequencer and ~389 ZEN-Core
+> parameters, tone/project save and restore, an optional cross-platform
+> `midir` transport, and an in-memory fake device for offline development.**
 
 ---
 
@@ -134,6 +141,7 @@ sysex
 zen-core
 swift
 python
+rust
 coremidi
 synthesizer-editor
 sound-librarian
@@ -154,8 +162,8 @@ For if you ever write this up at length — a conference proposal, a
 > tweakable parameters per tone — all hidden behind a small screen and
 > a few knobs. Roland never shipped a software editor or librarian for
 > these devices. `mc-programmer` is a clean-room reimplementation of
-> the underlying MIDI System Exclusive protocol as a pair of parallel
-> libraries (Python + Swift), built from publicly available reference
+> the underlying MIDI System Exclusive protocol as three parallel
+> libraries (Python + Swift + Rust), built from publicly available reference
 > documentation and verified against real hardware. It exposes the
 > sequencer, the full ZEN-Core parameter table, scene and clip
 > selection, and full-project save/restore as ordinary read/write
@@ -194,17 +202,17 @@ match in marketing copy.
 
 > **A clean, layered MIDI Sys-Ex client library for the Roland MC
 > family, with the parameter table auto-generated from the official
-> Jupiter-X MIDI Implementation, ~112 tests across both languages, an
+> Jupiter-X MIDI Implementation, 202 tests across three languages, an
 > in-memory `LoopbackTransport` so you can develop without hardware,
-> and a strict no-Roland-copyrighted-content policy. Python and Swift
-> implementations share the same address map and data model — pick
+> and a strict no-Roland-copyrighted-content policy. The Python, Swift,
+> and Rust implementations share the same address map and data model — pick
 > whichever ecosystem fits your project.**
 
 ### For Roland nerds
 
 > **Remember the PG-200 and PG-800 hardware programmers Roland used
 > to ship for the JX-3P and MKS-50? `mc-programmer` is the same idea
-> for the MC-101 and MC-707, but in software, in two languages,
+> for the MC-101 and MC-707, but in software, in three languages,
 > covering both halves of the ZCore tone descriptor (conventional
 > Tone Common/PMT/Partial *and* Synth Common/PMT/Partial), with full
 > project save/restore as a bonus. The library is sourced from the

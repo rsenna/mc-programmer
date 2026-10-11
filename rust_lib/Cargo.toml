@@ -1,0 +1,24 @@
+[package]
+name = "mc-programmer"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.71"
+description = "Rust library for programming Roland MC-101, MC-707 and MV-1 grooveboxes via MIDI System Exclusive"
+license = "MIT"
+
+[lib]
+name = "mc_programmer"
+path = "src/lib.rs"
+
+[dependencies]
+serde_json = "1.0"
+parking_lot = "0.12"
+
+[features]
+default = []
+# Real-hardware MIDI transport built on the cross-platform `midir` crate.
+midir = ["dep:midir"]
+
+[dependencies.midir]
+version = "0.10"
+optional = true

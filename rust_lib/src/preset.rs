@@ -1,0 +1,372 @@
+//! [`TonePreset`] — capture and restore one ZEN-Core tone from an MC.
+//!
+//! This is the per-tone layer. It dumps every byte of the conventional
+//! ZEN-Core Tone substructures (Common + MFX + PMT + Partial 1-4 + Pitch/
+//! Filter/Amp Envs × 4 + LFO × 4 + EQ × 4 + Synth Common/PMT/Partial) for one
+//! track or clip tone, and can write the same bytes back to any other track or
+//! clip slot — even on a different MC.
+//!
+//! The file format is plain JSON with hex byte strings, so it's human-readable,
+//! diffable, and tagged with the model ID so you can't accidentally flash a
+//! 707 tone onto a 101.
+
+use std::fs;
+
+use serde_json::{json, Value};
+
+use crate::addresses::{add_roland_address, add_roland_offset, roland_address_to_linear, ZENCORE_TONE_ALIGNMENT};
+use crate::error::{Error, Result};
+use crate::protocol::validate_7bit_data;
+use crate::zencore_data::SECTION_TOTAL_SIZE;
+
+pub const TONE_PRESET_FORMAT: &str = "mc_programmer.tone.v1";
+
+/// Encode bytes as uppercase hexadecimal tokens separated by spaces.
+pub(crate) fn bytes_to_hex(data: &[u8]) -> String {
+    data.iter()
+        .map(|b| format!("{b:02X}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Parse whitespace-separated hexadecimal bytes, reporting the position of an invalid token.
+pub(crate) fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
+    hex.split_whitespace()
+        .enumerate()
+        .map(|(index, token)| {
+            u8::from_str_radix(token, 16).map_err(|_| {
+                Error::Json(format!(
+                    "invalid hex byte {token:?} at position {}",
+                    index + 1
+                ))
+            })
+        })
+        .collect()
+}
+
+/// Require an object field and include its context in missing-field errors.
+fn required_field<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'a Value> {
+    if !value.is_object() {
+        return Err(Error::Json(format!("{context} must be a JSON object")));
+    }
+    value
+        .get(field)
+        .ok_or_else(|| Error::Json(format!("{context}.{field} is required")))
+}
+
+/// Read a required JSON string into an owned value, rejecting other types.
+fn required_string(value: &Value, field: &str, context: &str) -> Result<String> {
+    required_field(value, field, context)?
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| Error::Json(format!("{context}.{field} must be a string")))
+}
+
+/// Require a field containing a string or null; missing fields remain errors.
+fn required_optional_string(value: &Value, field: &str, context: &str) -> Result<Option<String>> {
+    match required_field(value, field, context)? {
+        Value::Null => Ok(None),
+        Value::String(text) => Ok(Some(text.clone())),
+        _ => Err(Error::Json(format!(
+            "{context}.{field} must be a string or null"
+        ))),
+    }
+}
+
+/// Borrow a required JSON array, rejecting missing fields and other types.
+fn required_array<'a>(value: &'a Value, field: &str, context: &str) -> Result<&'a [Value]> {
+    required_field(value, field, context)?
+        .as_array()
+        .map(Vec::as_slice)
+        .ok_or_else(|| Error::Json(format!("{context}.{field} must be an array")))
+}
+
+/// One contiguous chunk of a tone descriptor.
+///
+/// `offset` is relative to the tone descriptor's base address. `label` is the
+/// substructure name (`"tone_common"`, `"partial_1"`, …) and is informational
+/// only — what matters for round-tripping is `offset` and `data`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToneRegion {
+    pub offset: u32,
+    pub label: String,
+    pub data: Vec<u8>,
+}
+
+/// A captured ZEN-Core tone — every substructure as a byte blob.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TonePreset {
+    /// e.g. `"MC-707"` — used to refuse cross-model loads.
+    pub model: String,
+    /// Human-readable; defaults to the device's tone name.
+    pub name: Option<String>,
+    pub regions: Vec<ToneRegion>,
+}
+
+impl TonePreset {
+    /// Store a model tag, optional display name, and tone regions without device validation.
+    pub fn new(model: impl Into<String>, name: Option<String>, regions: Vec<ToneRegion>) -> Self {
+        TonePreset {
+            model: model.into(),
+            name,
+            regions,
+        }
+    }
+
+    /// Check model compatibility, 7-bit data, and region bounds before restoring a tone.
+    /// Offsets must fit the destination descriptor; `force` skips only model matching.
+    pub(crate) fn validate_for_write(
+        &self,
+        expected_model: &str,
+        force: bool,
+        base_address: u32,
+        location: &str,
+    ) -> Result<()> {
+        if !force && !self.model.is_empty() && self.model != expected_model {
+            return Err(Error::Value(format!(
+                "{location} tone model {:?} doesn't match this client's model {expected_model:?}",
+                self.model
+            )));
+        }
+
+        let descriptor_size = roland_address_to_linear(ZENCORE_TONE_ALIGNMENT)?;
+        for region in &self.regions {
+            validate_7bit_data(
+                &region.data,
+                &format!("{location} tone region {:?}", region.label),
+            )?;
+            let region_offset = roland_address_to_linear(region.offset).map_err(|error| {
+                Error::Value(format!(
+                    "{location} tone region {:?}: {error}",
+                    region.label
+                ))
+            })?;
+            let region_length = u32::try_from(region.data.len())
+                .map_err(|_| Error::Value(format!("{location} tone region is too large")))?;
+            let region_end = region_offset
+                .checked_add(region_length)
+                .ok_or_else(|| Error::Value(format!("{location} tone region is too large")))?;
+            if region_end > descriptor_size {
+                return Err(Error::Value(format!(
+                    "{location} tone region {:?} exceeds its descriptor slot",
+                    region.label
+                )));
+            }
+            let address = add_roland_address(base_address, region.offset).map_err(|error| {
+                Error::Value(format!(
+                    "{location} tone region {:?}: {error}",
+                    region.label
+                ))
+            })?;
+            if !region.data.is_empty() {
+                let last_offset = u32::try_from(region.data.len() - 1)
+                    .map_err(|_| Error::Value(format!("{location} tone region is too large")))?;
+                add_roland_offset(address, last_offset).map_err(|error| {
+                    Error::Value(format!(
+                        "{location} tone region {:?}: {error}",
+                        region.label
+                    ))
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The full JSON object for this preset (used directly for file output and
+    /// nested inside a [`crate::project::Project`]).
+    pub fn to_value(&self) -> Value {
+        let regions: Vec<Value> = self
+            .regions
+            .iter()
+            .map(|r| {
+                json!({
+                    "offset": format!("0x{:04X}", r.offset),
+                    "label": r.label,
+                    "data": bytes_to_hex(&r.data),
+                })
+            })
+            .collect();
+        let name = match &self.name {
+            Some(n) => json!(n),
+            None => Value::Null,
+        };
+        json!({
+            "format": TONE_PRESET_FORMAT,
+            "model": self.model,
+            "name": name,
+            "regions": regions,
+        })
+    }
+
+    /// Parse a tone preset object, checking its format tag, required fields, and hex data.
+    /// Device compatibility and region bounds are checked when the preset is restored.
+    pub fn from_value(v: &Value) -> Result<Self> {
+        let format = required_string(v, "format", "tone preset")?;
+        if format != TONE_PRESET_FORMAT {
+            return Err(Error::Json(format!(
+                "not an mc_programmer tone preset (format={format:?})"
+            )));
+        }
+        let model = required_string(v, "model", "tone preset")?;
+        let name = required_optional_string(v, "name", "tone preset")?;
+        let regions = required_array(v, "regions", "tone preset")?
+            .iter()
+            .enumerate()
+            .map(|(index, region)| parse_region(region, index))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(TonePreset {
+            model,
+            name,
+            regions,
+        })
+    }
+
+    /// Serialize the preset as indented JSON with hexadecimal region data.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(&self.to_value()).expect("serializing a serde_json::Value cannot fail")
+    }
+
+    /// Parse JSON text as a tone preset, returning JSON errors for malformed input.
+    pub fn from_json(raw: &str) -> Result<Self> {
+        let v: Value =
+            serde_json::from_str(raw).map_err(|e| Error::Json(format!("invalid JSON in tone preset: {e}")))?;
+        Self::from_value(&v)
+    }
+
+    /// Write the preset as indented JSON, replacing an existing file at `path`.
+    pub fn save(&self, path: &str) -> Result<()> {
+        fs::write(path, self.to_json())?;
+        Ok(())
+    }
+
+    /// Read and parse a tone preset file, propagating I/O and JSON errors.
+    pub fn load(path: &str) -> Result<Self> {
+        let raw = String::from_utf8(fs::read(path)?)?;
+        Self::from_json(&raw)
+    }
+}
+
+/// Parse one region with a hex offset and payload, using its index in error messages.
+fn parse_region(v: &Value, index: usize) -> Result<ToneRegion> {
+    let context = format!("tone preset.regions[{index}]");
+    let off = required_string(v, "offset", &context)?;
+    let hex = off
+        .strip_prefix("0x")
+        .or_else(|| off.strip_prefix("0X"))
+        .ok_or_else(|| Error::Json(format!("{context}.offset must start with 0x")))?;
+    let offset = u32::from_str_radix(hex, 16)
+        .map_err(|_| Error::Json(format!("{context}.offset is not a valid u32 hex value")))?;
+    let label = required_string(v, "label", &context)?;
+    let data_text = required_string(v, "data", &context)?;
+    let data = hex_to_bytes(&data_text).map_err(|error| Error::Json(format!("{context}.data: {error}")))?;
+    Ok(ToneRegion {
+        offset,
+        label,
+        data,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Region table — which substructures get dumped, and where each one lives
+// within the tone descriptor (relative to the tone base address).
+// ---------------------------------------------------------------------------
+
+/// One entry of the tone dump region table.
+#[derive(Clone, Debug)]
+pub struct ToneRegionSpec {
+    pub label: String,
+    pub offset: u32,
+    pub section_key: &'static str,
+}
+
+/// The full region spec list, built the same way as the Python / Swift ports.
+///
+/// Offsets come from the `[ZCore]` address map in Roland's Jupiter-X/Xm MIDI
+/// Implementation v1.06; sizes come from the auto-generated `SECTION_TOTAL_SIZE`.
+pub fn tone_region_specs() -> Vec<ToneRegionSpec> {
+    /// Append a region specification with an owned label and generated section key.
+    fn push(out: &mut Vec<ToneRegionSpec>, label: &str, offset: u32, key: &'static str) {
+        out.push(ToneRegionSpec {
+            label: label.to_string(),
+            offset,
+            section_key: key,
+        });
+    }
+
+    let mut out = Vec::with_capacity(26);
+    push(&mut out, "tone_common", 0x0000, "TONE_COMMON");
+    push(&mut out, "tone_mfx", 0x0100, "TONE_MFX");
+    push(&mut out, "tone_pmt", 0x1000, "TONE_PMT");
+
+    for n in 1..=4usize {
+        push(
+            &mut out,
+            &format!("partial_{n}"),
+            0x2000 + (n - 1) as u32 * 0x100,
+            "TONE_PARTIAL",
+        );
+    }
+    for n in 1..=4usize {
+        push(
+            &mut out,
+            &format!("partial_pitch_env_{n}"),
+            0x2400 + (n - 1) as u32 * 0x100,
+            "PARTIAL_PITCH_ENV",
+        );
+    }
+    for n in 1..=4usize {
+        push(
+            &mut out,
+            &format!("partial_filter_env_{n}"),
+            0x2800 + (n - 1) as u32 * 0x100,
+            "PARTIAL_FILTER_ENV",
+        );
+    }
+    for n in 1..=4usize {
+        push(
+            &mut out,
+            &format!("partial_amp_env_{n}"),
+            0x2c00 + (n - 1) as u32 * 0x100,
+            "PARTIAL_AMP_ENV",
+        );
+    }
+    // Partial LFO has a larger stride (0x200) — the struct is 0x11E bytes.
+    for n in 1..=4usize {
+        push(
+            &mut out,
+            &format!("partial_lfo_{n}"),
+            0x3000 + (n - 1) as u32 * 0x200,
+            "PARTIAL_LFO",
+        );
+    }
+    for n in 1..=4usize {
+        push(
+            &mut out,
+            &format!("partial_eq_{n}"),
+            0x3800 + (n - 1) as u32 * 0x100,
+            "PARTIAL_EQ",
+        );
+    }
+
+    push(&mut out, "tone_synth_common", 0x3c00, "TONE_SYNTH_COMMON");
+    push(&mut out, "tone_synth_pmt", 0x3d00, "TONE_SYNTH_PMT");
+    for n in 1..=4usize {
+        push(
+            &mut out,
+            &format!("tone_synth_partial_{n}"),
+            0x3e00 + (n - 1) as u32 * 0x100,
+            "TONE_SYNTH_PARTIAL",
+        );
+    }
+    out
+}
+
+/// Size in bytes of one substructure (from the auto-generated table).
+pub fn region_size(section_key: &str) -> u32 {
+    SECTION_TOTAL_SIZE
+        .iter()
+        .find(|(k, _)| *k == section_key)
+        .map(|(_, s)| *s)
+        .unwrap_or(0)
+}

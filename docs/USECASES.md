@@ -283,9 +283,9 @@ struct PianoRollView: View {
 }
 ```
 
-Or in Python with `tkinter` / `pyglet` / `matplotlib` for cross-platform
-prototyping. The reference repository's video transcripts include
-diagrams of how the lane structure should be visualised.
+Or in Python with `tkinter` / `pyglet` / `matplotlib`, or in Rust with a
+native GUI toolkit, for cross-platform prototyping. The reference repository's
+video transcripts include diagrams of how the lane structure should be visualised.
 
 ---
 
@@ -343,7 +343,7 @@ class MyMCAppTests(unittest.TestCase):
             self.assertEqual(step.components[0].note, 36)
 ```
 
-The same trick works for Swift via `XCTest` and `LoopbackTransport`.
+The same trick works for Swift via `XCTest` and Rust via `cargo test`, both with `LoopbackTransport`.
 
 ---
 

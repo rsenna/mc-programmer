@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-Two parallel libraries — Python (`python_lib/mc_programmer/`) and Swift
-(`swift_lib/Sources/MCProgrammer/`) — for programming the Roland MC-101,
-MC-707 and MV-1 grooveboxes via MIDI System Exclusive. Both libraries
-share the same data model, parameter table, and test coverage.
+Three parallel libraries — Python (`python_lib/mc_programmer/`), Swift
+(`swift_lib/Sources/MCProgrammer/`), and Rust (`rust_lib/src/`) — for
+programming the Roland MC-101, MC-707 and MV-1 grooveboxes via MIDI System
+Exclusive. All three share the same data model, parameter table, and test coverage.
 
 The original experimental Python scripts that this project derived from
 (see git history for `hack_tools.py`, `seq_tools.py`, `sys_ex_comm.py`,
@@ -20,19 +20,24 @@ implement.
 
 ```
 mc-programmer/
-├── README.md            project overview + quick starts in both languages
+├── README.md            project overview + quick starts in all three languages
 ├── ROADMAP.md           done / pending features (read this before adding params)
 ├── CLAUDE.md            this file
 ├── python_lib/          Python package
 │   ├── mc_programmer/   library source
 │   ├── examples/        runnable examples (LoopbackTransport)
-│   └── tests/           70-test unittest suite
+│   └── tests/           76-test unittest suites
 ├── swift_lib/           Swift Package
 │   ├── Sources/MCProgrammer/ library source
 │   ├── Examples/        executable target with bundled examples
 │   └── Tests/           42-test XCTest suite
+├── rust_lib/            Rust crate
+│   ├── src/             library source
+│   ├── examples/        runnable examples (LoopbackTransport)
+│   └── tests/           integration + feature tests
 ├── tools/
-│   └── gen_zencore_params.py
+│   ├── gen_zencore_params.py
+│   └── gen_rust_zencore.py
 └── reference/           third-party documentation
     ├── README.md        download links + copyright policy
     ├── MC_Programming_Video.txt
@@ -45,19 +50,19 @@ committed to the repository. The `.gitignore` blocks
 `reference/*.pdf`, `reference/firmware/`, and
 `reference/tools_jp_zcore.txt` to prevent accidental commits when
 contributors download them locally to regenerate the parameter table.
-The auto-generated `zencore_data.py` / `ZenCoreData.swift` files are
-committed (factual data, not protectable expression — see
-`reference/README.md`).
+The auto-generated `zencore_data.py`, `ZenCoreData.swift`, and
+`zencore_data.rs` files are committed (factual data, not protectable expression
+— see `reference/README.md`).
 
 ## Running
 
 ### Python
 
 ```bash
-PYTHONPATH=python_lib python -m unittest python_lib.tests.test_mc_programmer
+PYTHONPATH=python_lib python -m unittest discover -s python_lib/tests
 ```
 
-70 tests, ~13 seconds. The library has zero hard dependencies; install
+76 tests, including six generator regressions. The library has zero hard dependencies; install
 `python-rtmidi` (or use `pip install -e python_lib[rtmidi]`) to get the
 real-hardware transport.
 
@@ -72,9 +77,21 @@ swift run MCProgrammerExamples
 42 tests, ~40 seconds. Builds on Linux too — `CoreMIDITransport.swift`
 is wrapped in `#if canImport(CoreMIDI)`.
 
+### Rust
+
+```bash
+cd rust_lib
+cargo test --all-features
+cargo run --example four_on_the_floor
+```
+
+146 tests with all features enabled; the crate declares Rust 1.71 as its MSRV.
+The default crate has no MIDI backend; enable the optional `midir` feature
+for CoreMIDI on macOS, ALSA on Linux, or WinMM on Windows.
+
 ## Architecture
 
-The libraries are layered. From top to bottom:
+The three libraries are layered. From top to bottom:
 
 1. **High-level helpers** (`MCClient.place_note`, `set_pattern`,
    `clear_clip`, `select_scene`, `select_clip`, `dump_tone`,
@@ -97,8 +114,8 @@ The libraries are layered. From top to bottom:
 6. **Sys-Ex protocol** (`build_rq1`, `build_dt1`, `parse_dt1_payload`,
    `roland_checksum`) — message framing.
 7. **Transport** (pluggable) — `LoopbackTransport` (in-memory fake MC),
-   `RtMidiTransport` (Python rtmidi), `MidoTransport` (Python mido),
-   `CoreMIDITransport` (Swift native), `NullTransport` (test stub).
+   `RtMidiTransport` / `MidoTransport` (Python), `CoreMIDITransport` (Swift),
+   `MidirTransport` (Rust), and `NullTransport` (test stub).
 
 ### Key invariants
 

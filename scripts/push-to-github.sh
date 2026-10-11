@@ -23,7 +23,7 @@
 #   * Verifies you're inside the mc-programmer repo
 #   * Refuses to run if there are any Roland PDFs / firmware blobs that
 #     would violate copyright on push
-#   * Runs both test suites and aborts if either fails
+#   * Runs all three test suites and aborts if any fails
 #   * Stages every change (including the deletions of the old experimental
 #     scripts) and creates one clean commit summarising the rewrite
 #   * Adds a new git remote called "$REMOTE_NAME" pointing at the
@@ -62,9 +62,9 @@ if [[ ! -d .git ]]; then
     exit 1
 fi
 
-if [[ ! -f README.md || ! -d python_lib || ! -d swift_lib ]]; then
+if [[ ! -f README.md || ! -d python_lib || ! -d swift_lib || ! -d rust_lib ]]; then
     echo "error: this doesn't look like the mc-programmer repo" >&2
-    echo "  expected README.md, python_lib/, and swift_lib/ in $REPO_ROOT" >&2
+    echo "  expected README.md, python_lib/, swift_lib/, and rust_lib/ in $REPO_ROOT" >&2
     exit 1
 fi
 
@@ -87,7 +87,7 @@ echo "  OK — no copyrighted files in reference/"
 
 echo ""
 echo "→ Running Python tests..."
-PYTHONPATH=python_lib python3 -m unittest python_lib.tests.test_mc_programmer 2>&1 | tail -3
+PYTHONPATH=python_lib python3 -m unittest discover -s python_lib/tests 2>&1 | tail -3
 echo ""
 
 if command -v swift >/dev/null 2>&1; then
@@ -98,6 +98,19 @@ else
     echo "→ Skipping Swift tests (swift compiler not in PATH)"
     echo ""
 fi
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "✗ cargo is required to run the Rust test suite but was not found in PATH" >&2
+    exit 1
+fi
+
+echo "→ Running Rust tests..."
+if [[ "$(uname -s)" == "Linux" ]] && { ! command -v pkg-config >/dev/null 2>&1 || ! pkg-config --exists alsa; }; then
+    echo "  Notice: ALSA development metadata is unavailable; running Rust tests without optional features." >&2
+    (cd rust_lib && cargo test 2>&1 | tail -8)
+else
+    (cd rust_lib && cargo test --all-features 2>&1 | tail -8)
+fi
+echo ""
 
 # ---- Git status preview ----------------------------------------------------
 
@@ -123,11 +136,10 @@ if [[ "$CHANGED" != "0" ]]; then
     echo ""
     echo "→ Creating commit..."
     git commit -m "$(cat <<'EOF'
-Rewrite as parallel Python and Swift libraries for MC-101 / MC-707 / MV-1
+Parallel Python, Swift, and Rust libraries for MC-101 / MC-707 / MV-1
 
-Replaces the original experimental Python scripts with two parallel
-libraries (python_lib/ and swift_lib/) sharing the same data model and
-parameter table:
+Provides three libraries (python_lib/, swift_lib/, and rust_lib/) sharing the
+same data model and parameter table:
 
 * Roland Sys-Ex protocol (RQ1/DT1, checksum, model-ID detection)
 * Full address map (sequencer, motion, pitch-bend, ZEN-Core tones,
@@ -143,18 +155,18 @@ parameter table:
   JSON file format, model-ID safety check, chunked I/O
 * Scene/Clip selection via MIDI Program Change
 * Pluggable transports: native CoreMIDI on Swift, python-rtmidi/mido
-  on Python, plus a LoopbackTransport in-memory fake MC for offline
-  development and CI
+  on Python, midir on Rust, plus a LoopbackTransport in-memory fake MC
+  for offline development and CI
 * Musician-friendly API: 1-based front-panel numbering, note-name
   parser ("C1" = MIDI 36 per Roland convention), drum-key constants,
   semitone-based coarse tune, "did you mean" suggestions on typos,
   parameter discovery
 * MC-101 verified end-to-end (4 tracks instead of 8, same engine and
   parameter table)
-* 70 Python tests + 42 Swift tests, all passing offline against
-  LoopbackTransport
-* Comprehensive documentation: per-library READMEs, USECASES with
-  twelve worked examples, ROADMAP, CLAUDE.md for the agent
+* 70 Python tests + 42 Swift tests + 90 Rust tests, all passing offline
+  against LoopbackTransport
+* Comprehensive documentation: quick starts, runnable examples, USECASES,
+  ROADMAP, and CLAUDE.md for the agent
 
 The original scripts (hack_tools.py, seq_tools.py, sys_ex_comm.py, etc.)
 are removed from the working tree but remain in git history.

@@ -318,5 +318,5 @@ publishes a new revision of the doc.
 PYTHONPATH=python_lib python -m unittest python_lib.tests.test_mc_programmer
 ```
 
-51 tests. They run offline against `LoopbackTransport`, no MIDI device
+70 tests. They run offline against `LoopbackTransport`, no MIDI device
 required.
