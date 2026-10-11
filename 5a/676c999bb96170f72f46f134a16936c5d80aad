@@ -1,0 +1,20 @@
+rust_lib/Cargo.lock
+  h_0f0df16e3c7bfc 94-109,134-144,168-173,190,275-280,290-302,391-403,524-532
+rust_lib/Cargo.toml
+  h_0f0df16e3c7bfc 32
+rust_lib/src/midir_transport.rs
+  h_0f0df16e3c7bfc 228
+rust_lib/src/probe.rs
+  h_0f0df16e3c7bfc 50,919-938
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a676c999bb96170f72f46f134a16936c5d80aad",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
