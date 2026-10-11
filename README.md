@@ -12,7 +12,7 @@ table:
 |---|---|---|
 | **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 79 / 79 |
 | **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 44 / 44 |
-| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 210 / 210 |
+| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 211 / 211 |
 
 All three libraries cover **~389 named ZEN-Core tone parameters** auto-generated
 from the official Jupiter-X/Xm MIDI Implementation, plus the full
@@ -184,7 +184,7 @@ cargo test --all-features
 cargo run --example four_on_the_floor
 ```
 
-210 tests including unit, integration, feature-gated transport, and doctests.
+211 tests including unit, integration, feature-gated transport, and doctests.
 
 ### Regenerating the ZEN-Core parameter tables
 

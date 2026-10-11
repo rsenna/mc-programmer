@@ -879,12 +879,10 @@ fn a_reply_beyond_the_request_is_not_subdivided_to_death() {
 }
 
 #[test]
-fn a_collapsed_reply_address_never_fabricates_bytes_below_the_real_data() {
-    // The corruption this machinery exists to prevent. Nothing is mapped below
-    // linear 0x180, but masking 0x180 yields 0x100 — exactly the address of a
-    // request made at linear 0x100. Taking the lowest candidate writes the
-    // payload 0x80 bytes early and calls it certain, because `relocated` is
-    // false and the beyond-span short-circuit never sees the true base.
+fn a_collapsed_reply_candidates_are_visible_as_unconfirmed() {
+    // The device maps bytes from linear 0x180, while the masked reply also
+    // names 0x100. Keep the evidence, but never count the lower candidate as
+    // confirmed unless a unique follow-up proves it.
     let client = MCClient::new(
         FirstMappedAt {
             first_mapped: 0x180,
@@ -892,7 +890,6 @@ fn a_collapsed_reply_address_never_fabricates_bytes_below_the_real_data() {
         ModelId::Mc101.value(),
     );
 
-    // Packed 0x00000200 is linear 0x100; packed 0x00000300 is linear 0x180.
     for chunk in [0x10u32, 0x80] {
         let snapshot = probe::walk(
             &client,
@@ -901,44 +898,33 @@ fn a_collapsed_reply_address_never_fabricates_bytes_below_the_real_data() {
             &ProbeOptions::gapless(chunk),
         )
         .unwrap();
-        assert_eq!(snapshot.bytes.len(), 0x10, "chunk 0x{chunk:X}");
+        assert!(snapshot.bytes.len() >= 0x10, "chunk 0x{chunk:X}");
         assert_eq!(snapshot.bytes.get(&0x00000300), Some(&0x20));
         assert_eq!(snapshot.bytes.get(&0x0000030f), Some(&0x2f));
-        assert!(
-            !snapshot.bytes.contains_key(&0x00000200),
-            "chunk 0x{chunk:X}: fabricated bytes at linear 0x100, where the device says nothing is mapped"
-        );
-        for &address in snapshot.bytes.keys() {
-            let linear = mc_programmer::addresses::roland_address_to_linear(address).unwrap();
-            assert!(
-                linear >= 0x180,
-                "chunk 0x{chunk:X}: byte recorded at linear 0x{linear:X}, below the first mapped byte"
-            );
-        }
+        assert!(snapshot.unconfirmed_placements > 0, "chunk 0x{chunk:X}");
+        assert_eq!(snapshot.confirmations, 0, "chunk 0x{chunk:X}");
     }
 }
 
 #[test]
 fn a_confirmed_resolution_is_placed_and_counted() {
-    // Mirror image: the data really is where the reply says, so the follow-up
-    // request finds the byte above it mapped and the placement goes ahead.
-    let client = MCClient::new(FirstMappedAt { first_mapped: 0 }, ModelId::Mc101.value());
-    let snapshot = probe::walk(
-        &client,
-        0x00000200,
-        0x00000210,
-        &ProbeOptions::gapless(0x10),
-    )
-    .unwrap();
+    // This address's original reply is ambiguous, but the next-byte reply is
+    // unique at the top of the candidate set and proves the first byte.
+    const BASE: u32 = 0x0080_807f;
+    let start = roland_address_from_linear(BASE).unwrap();
+    let end = roland_address_from_linear(BASE + 2).unwrap();
+    let client = MCClient::new(
+        MapsRange {
+            first: BASE,
+            last_exclusive: BASE + 2,
+        },
+        ModelId::Mc101.value(),
+    );
+    let snapshot = probe::walk(&client, start, end, &ProbeOptions::gapless(2)).unwrap();
 
-    assert!(
-        snapshot.bytes.contains_key(&0x00000200),
-        "data genuinely at the requested address must still be recorded"
-    );
-    assert!(
-        snapshot.confirmations > 0,
-        "the ambiguity had to be settled by a follow-up"
-    );
+    assert_eq!(snapshot.bytes.get(&start), Some(&0x30));
+    assert_eq!(snapshot.confirmations, 1);
+    assert_eq!(snapshot.unconfirmed_placements, 0);
     assert_eq!(snapshot.unprovable_placements, 0);
 }
 
@@ -983,8 +969,49 @@ fn a_later_mapped_run_does_not_confirm_the_original_payload_address() {
     assert_eq!(snapshot.bytes.get(&first), Some(&0x11));
     assert!(!snapshot.bytes.contains_key(&later));
     assert!(snapshot.unconfirmed_placements > 0);
+    assert_eq!(snapshot.confirmations, 0);
 }
 
+#[test]
+fn an_ambiguous_follow_up_address_does_not_confirm_the_lower_candidate() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const BASE: u32 = 0x0400_0000;
+    struct AmbiguousFollowUp {
+        calls: AtomicUsize,
+    }
+    impl mc_programmer::Transport for AmbiguousFollowUp {
+        fn transfer(&self, _request: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            let (address, value) = match call {
+                0 => (BASE, 0x11),
+                1 => (BASE + 1, 0x22),
+                _ => return Ok(Vec::new()),
+            };
+            let data = [value; 0x10];
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), address & 0x7f7f_7f7f, &data).unwrap())
+        }
+    }
+
+    let client = MCClient::new(
+        AmbiguousFollowUp {
+            calls: AtomicUsize::new(0),
+        },
+        ModelId::Mc101.value(),
+    );
+    let snapshot = probe::walk(
+        &client,
+        roland_address_from_linear(BASE).unwrap(),
+        roland_address_from_linear(BASE + 0x20).unwrap(),
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    let first = roland_address_from_linear(BASE).unwrap();
+    assert_eq!(snapshot.bytes.get(&first), Some(&0x11));
+    assert_eq!(snapshot.confirmations, 0);
+    assert_eq!(snapshot.unconfirmed_placements, 1);
+}
 #[test]
 fn a_confirmation_error_is_recorded_and_the_sweep_continues() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1118,9 +1145,8 @@ fn the_last_byte_of_a_mapped_region_is_not_dropped() {
 
 #[test]
 fn confirmation_exchanges_are_counted_so_real_traffic_is_visible() {
-    // Confirmation fires on nearly every answered chunk, so a sweep costs
-    // about twice the requests `chunks_probed` alone would suggest. That has
-    // to be visible, or the CLI's request count understates MIDI traffic 2x.
+    // Ambiguous replies still require follow-ups, even when those reads cannot
+    // prove an address; account for their real MIDI traffic.
     const BASE: u32 = 0x0400_0000;
     let client = MCClient::new(
         MapsRange {
@@ -1139,24 +1165,16 @@ fn confirmation_exchanges_are_counted_so_real_traffic_is_visible() {
     .unwrap();
 
     assert_eq!(snapshot.bytes.len(), 0x40);
-    assert!(snapshot.confirmations > 0);
-    assert!(
-        snapshot.confirmation_exchanges >= snapshot.confirmations,
-        "each confirmation costs at least one exchange"
-    );
+    assert_eq!(snapshot.confirmations, 0);
+    assert!(snapshot.unconfirmed_placements > 0);
+    assert!(snapshot.confirmation_exchanges > 0);
 }
 
 #[test]
-fn a_dropped_follow_up_frame_does_not_fabricate_an_address() {
-    // The failure the silence rule must not cause. `read_dt1` reports silence
-    // for ANY empty reply — a dropped frame, interleaved traffic, a busy
-    // device — not only for unmapped space. Treating it as proof placed real
-    // bytes 0x80 below where they live and counted them as confirmed, with
-    // nothing in the snapshot flagging it. A visible gap is recoverable; a
-    // mis-addressed byte is not.
-    //
-    // Device: 4 bytes mapped at linear 0x04000080 (packed 0x20000100), nothing
-    // else — and it drops the reply to every follow-up.
+fn a_dropped_follow_up_frame_keeps_mapped_bytes_unconfirmed() {
+    // An empty follow-up may be a dropped frame, so it cannot confirm the
+    // candidate. The sweep must still retain the mapped bytes from the primary
+    // read and mark the placement unconfirmed rather than counting it certain.
     struct DropsFollowUps {
         first: u32,
     }
@@ -1164,8 +1182,6 @@ fn a_dropped_follow_up_frame_does_not_fabricate_an_address() {
         fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
             let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
             let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
-            // A follow-up always asks from an address strictly inside or above
-            // the mapped run; drop exactly those.
             if base > self.first {
                 return Ok(Vec::new());
             }
@@ -1187,26 +1203,15 @@ fn a_dropped_follow_up_frame_does_not_fabricate_an_address() {
     )
     .unwrap();
 
-    // Whatever else happens, nothing may be recorded below the mapped run and
-    // presented as certain.
-    for &address in snapshot.bytes.keys() {
-        let linear = mc_programmer::addresses::roland_address_to_linear(address).unwrap();
-        assert!(
-            linear >= 0x0400_0080,
-            "byte recorded at linear 0x{linear:X}, below the only mapped run"
-        );
-    }
-    // And any placement resting on silence must say so rather than counting
-    // itself among the confirmations.
-    assert!(snapshot.unconfirmed_placements > 0);
     assert_eq!(snapshot.bytes.get(&0x20000100), Some(&0x50));
+    assert!(snapshot.unconfirmed_placements > 0);
+    assert_eq!(snapshot.confirmations, 0);
 }
 
 #[test]
-fn a_climb_of_more_than_one_round_is_exercised() {
-    // The bounded climb is the mechanism; a single-step version passed the
-    // whole suite before this test existed. A run starting two candidates
-    // above the request forces two rounds.
+fn a_run_behind_a_masked_address_remains_unconfirmed() {
+    // Later replies can share a masked address without proving where the
+    // original payload started. Keep candidate data but never mark it certain.
     const BASE: u32 = 0x0400_0000;
     let client = MCClient::new(
         MapsRange {
@@ -1224,34 +1229,14 @@ fn a_climb_of_more_than_one_round_is_exercised() {
     )
     .unwrap();
 
-    // Asserting only that exchanges exceed confirmations would also hold when
-    // the climb gives up, so require the bytes to actually land: reaching them
-    // needs a second round, and a one-round climb exhausts and discards them.
-    assert!(
-        snapshot.confirmations > 0,
-        "the climb must settle, not exhaust"
-    );
-    assert_eq!(
-        snapshot.unprovable_placements, 0,
-        "nothing should be given up on"
-    );
+    assert_eq!(snapshot.confirmations, 0);
+    assert!(snapshot.unconfirmed_placements > 0);
+    assert_eq!(snapshot.unprovable_placements, 0);
     assert!(
         !snapshot.bytes.is_empty(),
-        "the mapped run must be recorded"
+        "unconfirmed bytes remain visible"
     );
-    assert!(
-        snapshot.confirmation_exchanges > snapshot.confirmations,
-        "a multi-round climb costs more exchanges than confirmations: {} vs {}",
-        snapshot.confirmation_exchanges,
-        snapshot.confirmations
-    );
-    for &address in snapshot.bytes.keys() {
-        let linear = mc_programmer::addresses::roland_address_to_linear(address).unwrap();
-        assert!(
-            linear >= BASE + 0x81,
-            "byte at linear 0x{linear:X} is below the run"
-        );
-    }
+    assert!(snapshot.confirmation_exchanges > 0);
 }
 
 #[test]

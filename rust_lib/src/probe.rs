@@ -309,20 +309,10 @@ impl DiffRun {
     }
 }
 
-/// How many rounds a confirmation climb may take before giving up.
-///
-/// This is a budget, **not** a proof of sufficiency. Each round resolves a
-/// *different* reply with its own candidate set — the device relocates forward
-/// to the next mapped run — so the climb walks up one mapped run per round and
-/// a sparse region can need more rounds than this. Exhaustion is reported as
-/// such rather than silently accepted, because a different `--start` or
-/// `chunk` starts the climb elsewhere and may resolve what this one could not.
-const MAX_CONFIRMATION_STEPS: usize = 8;
-
-/// What a confirmation climb established about a base address.
+/// What a single confirmation read established about a candidate address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Confirmation {
-    /// A follow-up reply positively identified this address.
+    /// A unique reply exactly at the next byte confirms this address.
     Confirmed(u32),
     /// Keep the candidate bytes, but record that the follow-up did not prove
     /// their address. A failed read is included in the snapshot failure list.
@@ -330,77 +320,61 @@ enum Confirmation {
         candidate: u32,
         failure: Option<String>,
     },
-    /// Nothing could be established. The exhausted flag distinguishes running
-    /// out of rounds from a reply that could not be resolved at all.
-    Unresolved { exhausted: bool },
+    /// No linear address could be resolved from the follow-up reply.
+    Unresolved,
 }
 
-/// Settle an ambiguous base by querying the next byte.
+/// Query the next byte to confirm an ambiguous base address.
 ///
-/// A reply exactly at that byte confirms the candidate. If the reply has the
-/// same masked address as the original, it may be the same run at a higher
-/// candidate, so the bounded climb can continue. A different later address is
-/// a separate mapped run and cannot locate the original payload.
+/// Only a unique reply exactly at the next byte proves that the original
+/// candidate is contiguous. A later reply may belong to another mapped run,
+/// and an ambiguous reply still has higher address candidates.
 fn confirm_base<T: Transport>(
     client: &MCClient<T>,
-    base: u32,
-    original_reply_address: u32,
+    candidate: u32,
     count: u32,
     timeout: f64,
 ) -> Result<(Confirmation, usize)> {
-    let mut candidate = base;
-    let mut exchanges = 0usize;
+    let probe_linear = candidate.saturating_add(1);
+    let Ok(address) = roland_address_from_linear(probe_linear) else {
+        return Ok((Confirmation::Confirmed(candidate), 0));
+    };
 
-    for _ in 0..MAX_CONFIRMATION_STEPS {
-        let probe_linear = candidate.saturating_add(1);
-        let Ok(address) = roland_address_from_linear(probe_linear) else {
-            return Ok((Confirmation::Confirmed(candidate), exchanges));
-        };
-
-        exchanges += 1;
-        let reply = match client.read_dt1(address, count, timeout) {
-            Ok(Some(reply)) => reply,
-            Ok(None) => {
-                return Ok((
-                    Confirmation::Unconfirmed {
-                        candidate,
-                        failure: None,
-                    },
-                    exchanges,
-                ));
-            }
-            Err(error) => {
-                return Ok((
-                    Confirmation::Unconfirmed {
-                        candidate,
-                        failure: Some(error.to_string()),
-                    },
-                    exchanges,
-                ));
-            }
-        };
-
-        match resolve_reply_location_from(reply.address, probe_linear) {
-            ReplyLocation::Resolved { linear, .. } if linear == probe_linear => {
-                return Ok((Confirmation::Confirmed(candidate), exchanges))
-            }
-            ReplyLocation::Resolved { linear, .. } if reply.address == original_reply_address => {
-                candidate = linear;
-            }
-            ReplyLocation::Resolved { .. } => {
-                return Ok((
-                    Confirmation::Unconfirmed {
-                        candidate,
-                        failure: None,
-                    },
-                    exchanges,
-                ));
-            }
-            _ => return Ok((Confirmation::Unresolved { exhausted: false }, exchanges)),
+    let reply = match client.read_dt1(address, count, timeout) {
+        Ok(Some(reply)) => reply,
+        Ok(None) => {
+            return Ok((
+                Confirmation::Unconfirmed {
+                    candidate,
+                    failure: None,
+                },
+                1,
+            ));
         }
-    }
+        Err(error) => {
+            return Ok((
+                Confirmation::Unconfirmed {
+                    candidate,
+                    failure: Some(error.to_string()),
+                },
+                1,
+            ));
+        }
+    };
 
-    Ok((Confirmation::Unresolved { exhausted: true }, exchanges))
+    let outcome = match resolve_reply_location_from(reply.address, probe_linear) {
+        ReplyLocation::Resolved {
+            linear,
+            provable: true,
+            ..
+        } if linear == probe_linear => Confirmation::Confirmed(candidate),
+        ReplyLocation::Resolved { .. } => Confirmation::Unconfirmed {
+            candidate,
+            failure: None,
+        },
+        _ => Confirmation::Unresolved,
+    };
+    Ok((outcome, 1))
 }
 
 /// Record a failure, keeping at most [`MAX_RECORDED_FAILURES`] of them.
@@ -574,18 +548,14 @@ pub fn walk_with_progress<T: Transport>(
                 continue;
             }
         };
-        // A resolution that is not forced must be settled, not assumed. The
-        // lowest candidate and the one CANDIDATE_SPACING above it produce the
-        // same masked reply, so placing the payload here would write it 0x80
-        // bytes from where it belongs whenever the device had relocated —
-        // reported as certain, because `relocated` is false and the
-        // beyond-span short-circuit never sees the true base. One follow-up
-        // request from `base + 1` drops `base` out of the candidate set and
-        // tells the two apart.
+        // A resolution that is not forced must be settled, not assumed.
+        // A follow-up confirms the candidate only when the reply uniquely
+        // starts at its next byte. A later or still-ambiguous reply may be a
+        // separate mapped run and cannot relocate the original payload.
         let base = if provable {
             base
         } else {
-            let (outcome, exchanges) = confirm_base(client, base, message.address, count, opts.timeout)?;
+            let (outcome, exchanges) = confirm_base(client, base, count, opts.timeout)?;
             snapshot.confirmation_exchanges += exchanges;
             match outcome {
                 Confirmation::Confirmed(confirmed) => {
@@ -605,23 +575,15 @@ pub fn walk_with_progress<T: Transport>(
                     }
                     candidate
                 }
-                Confirmation::Unresolved { exhausted } => {
+                Confirmation::Unresolved => {
                     snapshot.unprovable_placements += 1;
                     record_failure(
                         &mut snapshot,
                         address,
-                        if exhausted {
-                            format!(
-                                "reply address 0x{:08X}: gave up after {} confirmation rounds; a \
-                                 different --start or --chunk starts the climb elsewhere and may resolve it",
-                                message.address, MAX_CONFIRMATION_STEPS
-                            )
-                        } else {
-                            format!(
-                                "reply address 0x{:08X}: a follow-up reply could not be resolved at all",
-                                message.address
-                            )
-                        },
+                        format!(
+                            "reply address 0x{:08X}: follow-up reply has no resolvable candidate",
+                            message.address
+                        ),
                     );
                     progress(address, 0);
                     continue;
@@ -629,10 +591,8 @@ pub fn walk_with_progress<T: Transport>(
             }
         };
 
-        // Count relocation once, against the address finally settled on. The
-        // `provable` path has no confirmation step, and the confirmation path
-        // may move the base, so deciding this here is the only place both
-        // agree.
+        // Count relocation after the optional unique confirmation. Both paths
+        // now agree on the address attached to the payload.
         if base != start_linear {
             snapshot.relocated_replies += 1;
         }

@@ -72,8 +72,8 @@ that need disambiguation cost extra requests, while empty primary reads do not.
 A silent follow-up, a transport error, or a reply from a different later run
 leaves the original placement unconfirmed. The payload is retained and counted
 in `unconfirmed_placements`; confirmation errors are recorded in `failures`.
-Replies that cannot be resolved, or a climb that exhausts its bound, are
-discarded and counted in `unprovable_placements`.
+Follow-ups with no resolvable candidate are discarded and counted in
+`unprovable_placements`.
 
 **Contiguity: not confirmable.** A gap-compressed reply can match the
 requested length exactly — asked for 8 bytes over a span whose middle 4 are
