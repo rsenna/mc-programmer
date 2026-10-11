@@ -47,10 +47,9 @@
 //! ```
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -78,7 +77,6 @@ pub const MAX_CHUNK: u32 = 0x80;
 /// exact; only the per-address detail is capped, so a link that is failing
 /// everywhere cannot balloon the file.
 pub const MAX_RECORDED_FAILURES: usize = 64;
-static SNAPSHOT_TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// How a walk reads a range.
 #[derive(Debug, Clone, Copy)]
@@ -410,62 +408,6 @@ fn record_failure(snapshot: &mut Snapshot, address: u32, message: String) {
     if snapshot.failures.len() < MAX_RECORDED_FAILURES {
         snapshot.failures.push((address, message));
     }
-}
-
-fn write_snapshot_atomically(path: &Path, contents: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| Error::Value("snapshot path has no file name".to_string()))?
-        .to_string_lossy();
-    let permissions = match fs::metadata(path) {
-        Ok(metadata) if metadata.is_file() => Some(metadata.permissions()),
-        Ok(_) => None,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
-
-    for _ in 0..32 {
-        let sequence = SNAPSHOT_TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let temporary = parent.join(format!(
-            ".{file_name}.{}.{}.tmp",
-            std::process::id(),
-            sequence
-        ));
-        let mut file = match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-        {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.into()),
-        };
-
-        let write_result = file.write_all(contents).and_then(|()| {
-            if let Some(permissions) = &permissions {
-                file.set_permissions(permissions.clone())?;
-            }
-            file.sync_all()
-        });
-        drop(file);
-        if let Err(error) = write_result {
-            let _ = fs::remove_file(&temporary);
-            return Err(error.into());
-        }
-        if let Err(error) = fs::rename(&temporary, path) {
-            let _ = fs::remove_file(&temporary);
-            return Err(error.into());
-        }
-        return Ok(());
-    }
-
-    Err(Error::Value(
-        "could not allocate a temporary file for snapshot save".to_string(),
-    ))
 }
 
 /// Write a payload into the snapshot at `base`.
@@ -974,8 +916,26 @@ impl Snapshot {
     }
 
     pub fn save(&self, path: &str) -> Result<()> {
-        let contents = self.to_json();
-        write_snapshot_atomically(Path::new(path), contents.as_bytes())
+        let path = Path::new(path);
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let permissions = match fs::metadata(path) {
+            Ok(metadata) if metadata.is_file() => Some(metadata.permissions()),
+            Ok(_) => None,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+        temporary.write_all(self.to_json().as_bytes())?;
+        if let Some(permissions) = permissions {
+            temporary.as_file().set_permissions(permissions)?;
+        }
+        temporary.as_file().sync_all()?;
+        let _persisted_file = temporary.persist(path).map_err(|error| error.error)?;
+        Ok(())
     }
 
     pub fn load(path: &str) -> Result<Self> {

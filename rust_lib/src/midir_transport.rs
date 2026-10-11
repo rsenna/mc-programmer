@@ -225,11 +225,10 @@ impl Transport for MidirTransport {
     fn transfer(&self, message: &[u8], timeout: f64) -> Result<Vec<u8>> {
         let expected = expected_reply(message)?;
         let timeout = timeout_duration(timeout)?;
+        let _transaction = self.transaction.lock();
         let deadline = Instant::now()
             .checked_add(timeout)
             .ok_or_else(|| Error::Value("MIDI timeout exceeds the supported duration".to_string()))?;
-
-        let _transaction = self.transaction.lock();
         let (state, ready) = &*self.replies;
         state.lock().clear();
         self.output
