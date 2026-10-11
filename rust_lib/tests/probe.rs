@@ -4,6 +4,24 @@ use mc_programmer::addresses::{roland_address_from_linear, roland_address_to_lin
 use mc_programmer::probe::{self, ProbeOptions, Snapshot};
 use mc_programmer::{LoopbackTransport, MCClient, ModelId, NullTransport};
 
+/// A device whose first mapped byte is at `first_mapped` and which answers
+/// every request with the next mapped run at or after it — the behaviour that
+/// makes a masked reply collapse onto the requested address.
+struct FirstMappedAt {
+    first_mapped: u32,
+}
+
+impl mc_programmer::Transport for FirstMappedAt {
+    fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+        let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+        let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+        let count = u32::from(message[15]).max(1) as usize;
+        let start = base.max(self.first_mapped);
+        let data: Vec<u8> = (0..count).map(|i| 0x20 + i as u8).collect();
+        Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), start & 0x7f7f_7f7f, &data).unwrap())
+    }
+}
+
 fn mc101() -> (LoopbackTransport, MCClient<LoopbackTransport>) {
     // Hardware-faithful reply addresses: the probe's whole job is mapping
     // replies back to addresses, so a fake that echoes the request address
@@ -175,28 +193,21 @@ fn a_garbled_reply_is_recorded_and_the_sweep_continues() {
 #[test]
 fn a_sweep_keeps_the_bytes_it_got_before_a_failure() {
     // Good reply, then garbage, then good again: the good bytes survive.
-    struct FlakyThirdChunk {
-        calls: std::sync::atomic::AtomicUsize,
-    }
-    impl mc_programmer::Transport for FlakyThirdChunk {
+    // Garbles one ADDRESS rather than one call index: the confirmation
+    // follow-up adds exchanges, so a call counter would move the fault around.
+    struct GarblesOneAddress;
+    impl mc_programmer::Transport for GarblesOneAddress {
         fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
-            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if n == 1 {
+            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+            let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+            if base == 0x0400_0010 {
                 return Ok(vec![0xf0, 0xf7]); // unparseable
             }
-            // Echo a valid DT1 for the requested address with filler bytes.
-            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
-            let linear = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
-            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), linear & 0x7f7f_7f7f, &[0x2b; 0x10]).unwrap())
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), base & 0x7f7f_7f7f, &[0x2b; 0x10]).unwrap())
         }
     }
 
-    let client = MCClient::new(
-        FlakyThirdChunk {
-            calls: std::sync::atomic::AtomicUsize::new(0),
-        },
-        ModelId::Mc101.value(),
-    );
+    let client = MCClient::new(GarblesOneAddress, ModelId::Mc101.value());
     let snapshot = probe::walk(&client, 0x20000000, 0x20000030, &ProbeOptions::default()).unwrap();
 
     assert_eq!(snapshot.chunks_probed, 3);
@@ -226,6 +237,7 @@ fn failures_round_trip_through_json() {
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
+        confirmations: 0,
     };
     snapshot.bytes.insert(0x20000000, 0x7f);
 
@@ -245,19 +257,16 @@ fn a_relocated_reply_is_narrowed_until_only_confirmed_bytes_are_placed() {
     // later than the request it cannot also end within it — so the sweep
     // narrows the request instead of trusting the payload wholesale, and only
     // the byte the device actually reported an address for is recorded.
-    struct SkipsForward;
-    impl mc_programmer::Transport for SkipsForward {
-        fn transfer(&self, _message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
-            Ok(mc_programmer::build_dt1(
-                ModelId::Mc101.value(),
-                0x0800_0026,
-                &[0x11, 0x22, 0x33, 0x44],
-            )
-            .unwrap())
-        }
-    }
+    // Coherent model: nothing mapped below linear 0x08000026, and every
+    // request answered with the next mapped run at or after it — including the
+    // confirmation follow-up, which a fixed-reply fake could not answer.
 
-    let client = MCClient::new(SkipsForward, ModelId::Mc101.value());
+    let client = MCClient::new(
+        FirstMappedAt {
+            first_mapped: 0x0800_0026,
+        },
+        ModelId::Mc101.value(),
+    );
     let snapshot = probe::walk(&client, 0x40000024, 0x40000028, &ProbeOptions::gapless(4)).unwrap();
 
     assert!(
@@ -266,10 +275,12 @@ fn a_relocated_reply_is_narrowed_until_only_confirmed_bytes_are_placed() {
     );
     assert_eq!(snapshot.unplaceable_replies, 0);
     // Only the first byte of the payload is confirmed to live at 0x40000026.
-    assert_eq!(snapshot.bytes.get(&0x40000026), Some(&0x11));
+    assert_eq!(snapshot.bytes.get(&0x40000026), Some(&0x20));
+    // 0x...27 is legitimate: narrowing reaches a request the device answers in
+    // full, so those bytes are confirmed rather than assumed.
     assert!(
-        !snapshot.bytes.contains_key(&0x40000027),
-        "later payload bytes were never confirmed at an address"
+        !snapshot.bytes.contains_key(&0x40000025),
+        "bytes below the first mapped address must stay absent"
     );
     assert!(
         !snapshot.bytes.contains_key(&0x40000024),
@@ -366,6 +377,7 @@ fn diff_reports_addresses_present_on_only_one_side() {
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
+        confirmations: 0,
     };
     before.bytes.insert(0x20000000, 0xaa);
 
@@ -421,6 +433,7 @@ fn diff_runs_join_across_the_packed_address_discontinuity() {
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
+        confirmations: 0,
     };
     before.bytes.insert(0x2000007f, 0x00);
     before.bytes.insert(0x20000100, 0x00);
@@ -488,6 +501,7 @@ fn runs_collapse_contiguous_bytes_and_split_at_gaps() {
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
+        confirmations: 0,
     };
     snapshot.bytes.insert(0x20000000, 1);
     snapshot.bytes.insert(0x20000001, 2);
@@ -615,19 +629,15 @@ fn a_full_length_reply_that_ends_past_the_request_is_not_trusted() {
     // from probe.rs and this test fails: the device returns exactly `count`
     // bytes but starting two bytes into the span, so the payload ends past the
     // request and the last two bytes belong to addresses outside it.
-    struct AnswersTwoBytesLate;
-    impl mc_programmer::Transport for AnswersTwoBytesLate {
-        fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
-            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
-            let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
-            let count = u32::from(message[15]).max(1) as usize;
-            // Same length as the request, but shifted forward by two.
-            let data: Vec<u8> = (0..count).map(|i| 0x40 + i as u8).collect();
-            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), (base + 2) & 0x7f7f_7f7f, &data).unwrap())
-        }
-    }
+    // First mapped byte sits two into the span, so a full-length reply starts
+    // late and therefore ends past the request.
 
-    let client = MCClient::new(AnswersTwoBytesLate, ModelId::Mc101.value());
+    let client = MCClient::new(
+        FirstMappedAt {
+            first_mapped: 0x0400_0002,
+        },
+        ModelId::Mc101.value(),
+    );
     let snapshot = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(4)).unwrap();
 
     // Trusting length alone would place 4 bytes at linear +2..+6, i.e. two of
@@ -682,14 +692,14 @@ fn a_reply_beyond_the_request_is_not_subdivided_to_death() {
     // The device reporting a base past the span has already said the span
     // holds nothing. Re-asking in halves costs 2*chunk-1 round trips to learn
     // what one reply said, and inflates every counter by the same factor.
-    struct AnswersFarAway;
-    impl mc_programmer::Transport for AnswersFarAway {
-        fn transfer(&self, _message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
-            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), 0x0400_1000, &[0x5a]).unwrap())
-        }
-    }
+    // Nothing mapped anywhere near the swept range.
 
-    let client = MCClient::new(AnswersFarAway, ModelId::Mc101.value());
+    let client = MCClient::new(
+        FirstMappedAt {
+            first_mapped: 0x0400_1000,
+        },
+        ModelId::Mc101.value(),
+    );
     let snapshot = probe::walk(
         &client,
         0x20000000,
@@ -707,4 +717,89 @@ fn a_reply_beyond_the_request_is_not_subdivided_to_death() {
     // byte is dropped rather than widening the snapshot past what was asked.
     assert!(snapshot.is_empty());
     assert_eq!(snapshot.truncated_placements, 1);
+}
+
+#[test]
+fn a_collapsed_reply_address_never_fabricates_bytes_below_the_real_data() {
+    // The corruption this machinery exists to prevent. Nothing is mapped below
+    // linear 0x180, but masking 0x180 yields 0x100 — exactly the address of a
+    // request made at linear 0x100. Taking the lowest candidate writes the
+    // payload 0x80 bytes early and calls it certain, because `relocated` is
+    // false and the beyond-span short-circuit never sees the true base.
+    let client = MCClient::new(
+        FirstMappedAt {
+            first_mapped: 0x180,
+        },
+        ModelId::Mc101.value(),
+    );
+
+    // Packed 0x00000200 is linear 0x100; packed 0x00000300 is linear 0x180.
+    for chunk in [0x10u32, 0x80] {
+        let snapshot = probe::walk(
+            &client,
+            0x00000200,
+            0x00000300,
+            &ProbeOptions::gapless(chunk),
+        )
+        .unwrap();
+        assert!(
+            !snapshot.bytes.contains_key(&0x00000200),
+            "chunk 0x{chunk:X}: fabricated bytes at linear 0x100, where the device says nothing is mapped"
+        );
+        for &address in snapshot.bytes.keys() {
+            let linear = mc_programmer::addresses::roland_address_to_linear(address).unwrap();
+            assert!(
+                linear >= 0x180,
+                "chunk 0x{chunk:X}: byte recorded at linear 0x{linear:X}, below the first mapped byte"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_confirmed_resolution_is_placed_and_counted() {
+    // Mirror image: the data really is where the reply says, so the follow-up
+    // request finds the byte above it mapped and the placement goes ahead.
+    let client = MCClient::new(FirstMappedAt { first_mapped: 0 }, ModelId::Mc101.value());
+    let snapshot = probe::walk(
+        &client,
+        0x00000200,
+        0x00000210,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    assert!(
+        snapshot.bytes.contains_key(&0x00000200),
+        "data genuinely at the requested address must still be recorded"
+    );
+    assert!(
+        snapshot.confirmations > 0,
+        "the ambiguity had to be settled by a follow-up"
+    );
+    assert_eq!(snapshot.unprovable_placements, 0);
+}
+
+#[test]
+fn an_empty_reply_is_not_counted_as_answered() {
+    struct EmptyPayload;
+    impl mc_programmer::Transport for EmptyPayload {
+        fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+            let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), base & 0x7f7f_7f7f, &[]).unwrap())
+        }
+    }
+
+    let client = MCClient::new(EmptyPayload, ModelId::Mc101.value());
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(1)).unwrap();
+
+    // A chunk cannot be both answered and failed: the dump summary would
+    // print the same chunks as a success and a warning.
+    assert_eq!(snapshot.chunks_failed, 4);
+    assert_eq!(
+        snapshot.chunks_answered, 0,
+        "an unusable reply is not an answer"
+    );
+    assert!(snapshot.chunks_probed >= snapshot.chunks_answered + snapshot.chunks_failed);
 }

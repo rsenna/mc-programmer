@@ -51,7 +51,10 @@ use std::fs;
 
 use serde_json::{json, Value};
 
-use crate::addresses::{resolve_reply_location, roland_address_from_linear, roland_address_to_linear, ReplyLocation};
+use crate::addresses::{
+    resolve_reply_location, resolve_reply_location_from, roland_address_from_linear, roland_address_to_linear,
+    ReplyLocation, CANDIDATE_SPACING,
+};
 use crate::client::MCClient;
 use crate::error::{Error, Result};
 use crate::preset::{bytes_to_hex, hex_to_bytes};
@@ -170,7 +173,15 @@ pub struct Snapshot {
     /// address, so a non-zero count means the sweep has holes — refine the
     /// range or chunk size and re-run.
     pub unplaceable_replies: usize,
-    /// Placements whose address could not be proven, because a second
+    /// Ambiguous resolutions settled by a follow-up request. Expected
+    /// wherever the device's reply address collapses onto the requested one;
+    /// each costs one extra exchange and buys a placement that is a fact
+    /// rather than a guess.
+    pub confirmations: usize,
+    /// Replies whose address could not be proven even after a follow-up, and
+    /// whose payload was therefore **discarded** rather than placed at a
+    /// guessed address. A non-zero count means the sweep has holes. See
+    /// [`crate::addresses::resolve_reply_location`]. A second
     /// candidate for the reply's masked address also falls within the
     /// request's reach. The bytes are recorded as the leading hypothesis; a
     /// non-zero count means that many of this snapshot's addresses are not
@@ -221,6 +232,33 @@ impl DiffRun {
 
     pub fn is_empty(&self) -> bool {
         self.after.is_empty()
+    }
+}
+
+/// Settle an ambiguous base with one follow-up request from `base + 1`.
+///
+/// Returns the confirmed linear base, or `None` when the follow-up produced
+/// nothing to decide on.
+fn confirm_base<T: Transport>(client: &MCClient<T>, base: u32, count: u32, timeout: f64) -> Result<Option<u32>> {
+    let probe_linear = base.saturating_add(1);
+    let Ok(address) = roland_address_from_linear(probe_linear) else {
+        return Ok(None);
+    };
+    let Some(reply) = client.read_dt1(address, count, timeout)? else {
+        return Ok(None);
+    };
+    match resolve_reply_location_from(reply.address, probe_linear) {
+        // The byte above `base` is mapped too, so the run really does start
+        // at `base`.
+        ReplyLocation::Resolved { linear, .. } if linear == probe_linear => Ok(Some(base)),
+        // Anything else is the true start, now unambiguous because `base`
+        // itself is no longer a candidate.
+        ReplyLocation::Resolved {
+            linear,
+            provable: true,
+            ..
+        } => Ok(Some(linear)),
+        _ => Ok(None),
     }
 }
 
@@ -298,6 +336,7 @@ pub fn walk_with_progress<T: Transport>(
         subdivisions: 0,
         truncated_placements: 0,
         unprovable_placements: 0,
+        confirmations: 0,
     };
 
     // Work stack of (linear start, byte count) still to resolve. A short
@@ -334,8 +373,6 @@ pub fn walk_with_progress<T: Transport>(
             progress(address, 0);
             continue;
         };
-        snapshot.chunks_answered += 1;
-
         // `read_dt1` deliberately skips the payload-length check that `read`
         // applies, so a well-formed DT1 carrying no payload reaches here. It
         // must not reach the slicing below: `&data[..1]` on an empty payload
@@ -351,11 +388,12 @@ pub fn walk_with_progress<T: Transport>(
             progress(address, 0);
             continue;
         }
+        snapshot.chunks_answered += 1;
 
         // Where does this payload actually live? The reply reports the data's
         // linear address with every byte masked to 7 bits, so the request has
         // to disambiguate it.
-        let (base, relocated, provable) = match resolve_reply_location(message.address, start_linear, count) {
+        let (base, relocated, provable) = match resolve_reply_location(message.address, start_linear) {
             ReplyLocation::Resolved {
                 linear,
                 relocated,
@@ -389,13 +427,46 @@ pub fn walk_with_progress<T: Transport>(
                 continue;
             }
         };
-        if !provable {
-            snapshot.unprovable_placements += 1;
-        }
+        // A resolution that is not forced must be settled, not assumed. The
+        // lowest candidate and the one CANDIDATE_SPACING above it produce the
+        // same masked reply, so placing the payload here would write it 0x80
+        // bytes from where it belongs whenever the device had relocated —
+        // reported as certain, because `relocated` is false and the
+        // beyond-span short-circuit never sees the true base. One follow-up
+        // request from `base + 1` drops `base` out of the candidate set and
+        // tells the two apart.
+        let base = if provable {
+            base
+        } else {
+            match confirm_base(client, base, count, opts.timeout) {
+                Ok(Some(confirmed)) => {
+                    if confirmed != base {
+                        snapshot.relocated_replies += 1;
+                    }
+                    snapshot.confirmations += 1;
+                    confirmed
+                }
+                Ok(None) | Err(_) => {
+                    // The follow-up told us nothing, so the address stays a
+                    // guess. Record rather than place: a wrong entry in the
+                    // address map looks entirely plausible.
+                    snapshot.unprovable_placements += 1;
+                    record_failure(
+                        &mut snapshot,
+                        address,
+                        format!(
+                            "reply address 0x{:08X} could not be confirmed; {} and {} + 0x{:X} are indistinguishable",
+                            message.address, base, base, CANDIDATE_SPACING
+                        ),
+                    );
+                    progress(address, 0);
+                    continue;
+                }
+            }
+        };
         if relocated {
             snapshot.relocated_replies += 1;
         }
-
         // The device answered beyond the requested span, which means it found
         // nothing mapped inside it. Subdividing would re-ask about a range the
         // device has already answered for — 2·chunk−1 round trips to learn
@@ -551,6 +622,7 @@ impl Snapshot {
             "subdivisions": self.subdivisions,
             "truncated_placements": self.truncated_placements,
             "unprovable_placements": self.unprovable_placements,
+            "confirmations": self.confirmations,
             "failures": self
                 .failures
                 .iter()
@@ -625,6 +697,7 @@ impl Snapshot {
                 .get("unprovable_placements")
                 .and_then(Value::as_u64)
                 .unwrap_or(0) as usize,
+            confirmations: v.get("confirmations").and_then(Value::as_u64).unwrap_or(0) as usize,
             failures: v
                 .get("failures")
                 .and_then(Value::as_array)

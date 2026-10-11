@@ -130,39 +130,53 @@ pub const CANDIDATE_SPACING: u32 = 0x80;
 /// from `0x40000020` answered for `0x4000002E` — past the end of the span. So
 /// the answer is the lowest candidate at or after the request.
 ///
-/// # When the masking cannot be inverted
+/// # When one exchange is not enough
 ///
-/// Candidates are [`CANDIDATE_SPACING`] apart, so if the device relocated
-/// forward by exactly that much it produces the *same* masked reply as one
-/// that answered at the request: asked at linear `0x100`, a device answering
-/// for `0x180` is indistinguishable from one answering for `0x100`.
+/// Candidates are [`CANDIDATE_SPACING`] apart, so a device that relocated
+/// forward by exactly that much produces the *same* masked reply as one that
+/// answered at the request: asked at linear `0x100`, a device answering for
+/// `0x180` is indistinguishable from one answering for `0x100`. The lowest
+/// candidate is the better guess, because the device returns the *next*
+/// mapped run — but it is a guess, and acting on it writes a payload `0x80`
+/// bytes from where it belongs.
 ///
-/// `provable` reports whether that doubt is live **for this request**. The
-/// alternative candidate only matters if the device could plausibly have
-/// jumped there, i.e. if it lies within the span the request covers; a
-/// candidate beyond `request_linear + count` would mean the device skipped the
-/// entire requested range, which the caller detects on its own. So `provable`
-/// is false only when another candidate falls inside the request's own reach —
-/// which is the question an operator actually needs answered, rather than
-/// "does any higher candidate exist anywhere in the address space" (it almost
-/// always does, making such a flag constant and useless).
-pub fn resolve_reply_location(reply_address: u32, request_linear: u32, count: u32) -> ReplyLocation {
+/// `provable` is true only when no other candidate is at or after the
+/// request, so the answer is forced. Otherwise the caller must disambiguate,
+/// which a single request cannot do: every scope one could test the
+/// alternative against is at least `CANDIDATE_SPACING` away, and a request
+/// can ask for at most that many bytes. [`resolve_reply_location_from`]
+/// exists for the second exchange that settles it.
+pub fn resolve_reply_location(reply_address: u32, request_linear: u32) -> ReplyLocation {
     let forward: Vec<u32> = reply_address_candidates(reply_address)
         .into_iter()
         .filter(|&candidate| candidate >= request_linear)
         .collect();
 
-    let Some(&linear) = forward.first() else {
-        return ReplyLocation::Unexplained;
-    };
-    let reach = request_linear.saturating_add(count.max(1));
-    let contested = forward.iter().skip(1).any(|&other| other < reach);
-
-    ReplyLocation::Resolved {
-        linear,
-        relocated: linear != request_linear,
-        provable: !contested,
+    match forward.first() {
+        None => ReplyLocation::Unexplained,
+        Some(&linear) => ReplyLocation::Resolved {
+            linear,
+            relocated: linear != request_linear,
+            provable: forward.len() == 1,
+        },
     }
+}
+
+/// Resolve a reply to a request made one byte *above* the address in doubt.
+///
+/// This is how the ambiguity in [`resolve_reply_location`] is settled. Asking
+/// from `request_linear + 1` drops `request_linear` itself out of the
+/// candidate set, so the collapse disappears:
+///
+/// * data really at `request_linear` → the follow-up answers for
+///   `request_linear + 1`, which is mapped too.
+/// * data really at `request_linear + 0x80` → the follow-up answers for
+///   `request_linear + 0x80`, the lowest remaining candidate.
+///
+/// The two outcomes are distinct, so one extra exchange converts a guess into
+/// a fact.
+pub fn resolve_reply_location_from(reply_address: u32, probe_linear: u32) -> ReplyLocation {
+    resolve_reply_location(reply_address, probe_linear)
 }
 
 /// Add one packed Roland address value to another.

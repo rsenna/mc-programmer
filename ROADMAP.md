@@ -191,7 +191,8 @@ Rust only so far — the Python and Swift ports do not have it yet.
 - [x] Swift: 44 tests via XCTest, all passing; full suite runs in ~8 seconds
       (the file round-trip uses a compact fixture; the full dump/restore
       integration path remains covered)
-- [x] Rust: 192 tests via `cargo test --all-features`, all passing
+- [x] Rust: 195 tests via `cargo test --all-features`, all passing
+      (39 of them cover the address-space probe and reply-address decoding)
       (39 of them cover the address-space probe and reply-address decoding)
 
 ---

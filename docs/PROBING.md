@@ -54,31 +54,31 @@ exchange supports it. The cost is extra requests near region edges
 `0x10`, `0x20` and `0x80` of the same range now agree byte for byte, where
 before they disagreed by tens of bytes.
 
-### Two things the protocol cannot confirm
+### What the probe can and cannot confirm
 
-Both are reported rather than hidden, because a probe that overstates its
-certainty is worse than one that admits the gap.
+**The address: confirmed, at the cost of one extra exchange.** If the device
+relocated forward by exactly `0x80`, the relocated address and the requested
+one produce the *same* masked reply, and one exchange cannot tell them apart.
+Taking the lower candidate would write a payload `0x80` bytes from where it
+belongs and report it as certain. So whenever the resolution is not forced,
+the sweep asks again from one byte above: that drops the requested address out
+of the candidate set, and the two cases give different answers.
+`Snapshot::confirmations` counts those follow-ups. When a follow-up settles
+nothing, the payload is **discarded** and counted in
+`unprovable_placements` — a non-zero value means the sweep has holes.
 
-**Contiguity.** A gap-compressed reply can match the requested length exactly
-— asked for 8 bytes over a span whose middle 4 are unmapped, a device that
-keeps reading past the span returns 4 from inside and 4 from beyond. Nothing
-in (address, length, count) tells that apart from a clean 8-byte run, and
-per-byte confirmation is unavailable because the MC largely ignores 1-byte
-requests. `assumed_contiguous_placements` counts the runs resting on this
-assumption. Cross-check a suspicious run by re-sweeping at a different
-`chunk`: requests then start at different addresses and compress differently.
+**Contiguity: not confirmable.** A gap-compressed reply can match the
+requested length exactly — asked for 8 bytes over a span whose middle 4 are
+unmapped, a device that keeps reading past the span returns 4 from inside and
+4 from beyond. Nothing in (address, length, count) separates that from a clean
+8-byte run, and per-byte confirmation is unavailable because the MC largely
+ignores 1-byte requests. There is no counter for this, because it applies to
+every multi-byte placement and so carries no signal. Cross-check a run that
+matters by re-sweeping at a different `chunk`: requests then start at
+different addresses and compress differently.
 
-**The address itself.** If the device relocated forward by exactly `0x80` (or
-a multiple), the relocated address and the requested one produce the *same*
-masked reply. The nearest candidate is the better hypothesis — the device
-returns the *next* mapped run — but it remains a hypothesis.
-`unprovable_placements` counts those.
-
-`Snapshot` reports all of this: `relocated_replies`, `subdivisions`,
-`unplaceable_replies` (replies discarded rather than placed at a guessed
-address), `truncated_placements`, `unprovable_placements` and
-`assumed_contiguous_placements`. A non-zero `unplaceable_replies` means the
-sweep has holes.
+`Snapshot` reports `relocated_replies`, `subdivisions`, `confirmations`,
+`unplaceable_replies`, `unprovable_placements` and `truncated_placements`.
 
 ## Address arithmetic, and why ranges look odd
 
