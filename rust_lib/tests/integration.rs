@@ -1392,3 +1392,78 @@ fn loopback_rejects_high_bit_rq1_length_fields() {
     request[15] |= 0x80;
     assert!(mc_programmer::Transport::transfer(&transport, &request, 0.1).is_err());
 }
+#[test]
+fn read_param_rejects_any_byte_above_the_nibble_range() {
+    for data in [vec![0x10, 0x01], vec![0x01, 0x10]] {
+        let reply = build_dt1(ModelId::Mc707.value(), 0x3000_0000, &data).unwrap();
+        let transport = NullTransport::with_responses(vec![reply]);
+        let client = MCClient::new(transport.clone(), ModelId::Mc707.value());
+        assert!(matches!(
+            client.read_param(0x3000_0000, 2),
+            Err(mc_programmer::Error::Value(_))
+        ));
+        assert_eq!(transport.sent().len(), 1);
+    }
+}
+
+#[test]
+fn read_param_decodes_valid_multi_byte_nibbles() {
+    let reply = build_dt1(ModelId::Mc707.value(), 0x3000_0000, &[0x01, 0x0a]).unwrap();
+    let transport = NullTransport::with_responses(vec![reply]);
+    let client = MCClient::new(transport, ModelId::Mc707.value());
+    assert_eq!(client.read_param(0x3000_0000, 2).unwrap(), 0x1a);
+}
+
+#[test]
+fn clip_step_params_rejects_missing_reply() {
+    let transport = NullTransport::new();
+    let client = MCClient::new(transport.clone(), ModelId::Mc707.value());
+    assert!(matches!(
+        client.read_clip_step_params(0, 0),
+        Err(mc_programmer::Error::Value(_))
+    ));
+    assert_eq!(transport.sent().len(), 1);
+}
+#[test]
+fn clip_step_params_rejects_short_nonempty_reply() {
+    let address = AddressMap::new().clip_params_address(0, 0).unwrap();
+    let reply = build_dt1(ModelId::Mc707.value(), address, &[0x08, 0x00]).unwrap();
+    let transport = NullTransport::with_responses(vec![reply]);
+    let client = MCClient::new(transport.clone(), ModelId::Mc707.value());
+
+    let error = client.read_clip_step_params(0, 0).unwrap_err();
+    assert!(error.to_string().contains("DT1 payload length mismatch"));
+    assert_eq!(transport.sent().len(), 1);
+}
+
+#[test]
+fn nudge_coarse_tune_rejects_missing_read_before_writing() {
+    let transport = NullTransport::new();
+    let client = MCClient::new(transport.clone(), ModelId::Mc707.value());
+    assert!(matches!(
+        client.nudge_coarse_tune(0, None, 1),
+        Err(mc_programmer::Error::Value(_))
+    ));
+    assert_eq!(
+        transport.sent().len(),
+        1,
+        "missing read must not be followed by a DT1 write"
+    );
+}
+
+#[test]
+fn nudge_coarse_tune_preserves_successful_clamp_and_write_behavior() {
+    let model = ModelId::Mc707.value();
+    let base = AddressMap::new().zencore_tone_address(0, None).unwrap();
+    let address =
+        mc_programmer::addresses::add_roland_address(base, mc_programmer::addresses::TONE_COMMON_COARSE_TUNE_OFFS)
+            .unwrap();
+    let reply = build_dt1(model, address, &[110]).unwrap();
+    let transport = NullTransport::with_responses(vec![reply]);
+    let client = MCClient::new(transport.clone(), model);
+
+    assert_eq!(client.nudge_coarse_tune(0, None, 10).unwrap(), 112);
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(parse_dt1_payload(&sent[1]).unwrap().data, vec![112]);
+}

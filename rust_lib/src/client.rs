@@ -119,6 +119,7 @@ impl<T: Transport> MCClient<T> {
 
     /// Read a parameter; single-byte values are raw 7-bit, wider values are
     /// MSB-first nibble-packed into the returned `u32`.
+    /// Wider replies containing any byte above `0x0F` are rejected.
     pub fn read_param(&self, address: u32, size: usize) -> Result<u32> {
         if size > 8 {
             return Err(Error::Value(format!(
@@ -132,7 +133,12 @@ impl<T: Transport> MCClient<T> {
         }
         let mut value = 0u32;
         for (i, &b) in data.iter().enumerate() {
-            value |= u32::from(b & 0x0f) << (4 * (data.len() - i - 1));
+            if b > 0x0f {
+                return Err(Error::Value(format!(
+                    "multi-byte parameter nibble {i} is 0x{b:02X}, expected 0x00..=0x0F"
+                )));
+            }
+            value |= u32::from(b) << (4 * (data.len() - i - 1));
         }
         Ok(value)
     }
@@ -188,14 +194,15 @@ impl<T: Transport> MCClient<T> {
 
     /// Returns the clip's step scale and step count. Per the MC video the
     /// step length is encoded as two nibble bytes — e.g. `0x08 0x00` → 128.
+    /// Empty or incomplete replies return an error rather than a default.
     pub fn read_clip_step_params(&self, trk_idx: usize, clip_idx: usize) -> Result<ClipStepParams> {
         let addr = self.addresses.clip_params_address(trk_idx, clip_idx)?;
         let data = self.read(addr, 4)?;
         if data.len() < 3 {
-            return Ok(ClipStepParams {
-                scale: StepScale::Sixteenth,
-                step_count: 16,
-            });
+            return Err(Error::Value(format!(
+                "clip step parameters reply too short: expected at least 3 bytes, got {}",
+                data.len()
+            )));
         }
         Ok(ClipStepParams {
             scale: StepScale::from_u8(data[0]),
@@ -205,13 +212,17 @@ impl<T: Transport> MCClient<T> {
 
     // ---- ZEN-Core ----------------------------------------------------------
 
-    /// Read raw coarse tune, where 64 is centered; an empty reply yields zero.
-    /// Indices are zero-based; `None` selects the track tone.
-    pub fn read_coarse_tune(&self, trk_idx: usize, clip_idx: Option<usize>) -> Result<u8> {
+    fn read_coarse_tune_value(&self, trk_idx: usize, clip_idx: Option<usize>) -> Result<Option<u8>> {
         let base = self.addresses.zencore_tone_address(trk_idx, clip_idx)?;
         let addr = add_roland_address(base, TONE_COMMON_COARSE_TUNE_OFFS)?;
         let data = self.read(addr, 1)?;
-        Ok(data.first().copied().unwrap_or(0))
+        Ok(data.first().copied())
+    }
+
+    /// Read raw coarse tune, where 64 is centered; an empty reply yields zero.
+    /// Indices are zero-based; `None` selects the track tone.
+    pub fn read_coarse_tune(&self, trk_idx: usize, clip_idx: Option<usize>) -> Result<u8> {
+        Ok(self.read_coarse_tune_value(trk_idx, clip_idx)?.unwrap_or(0))
     }
 
     /// Clamp raw coarse tune to `16..=112` and write it to the selected tone.
@@ -225,8 +236,12 @@ impl<T: Transport> MCClient<T> {
     }
 
     /// Read-modify-write helper matching `coarse_tune_rmw` in the scripts.
+    /// A missing coarse-tune reply returns an error and causes no write.
     pub fn nudge_coarse_tune(&self, trk_idx: usize, clip_idx: Option<usize>, step: i32) -> Result<u8> {
-        let current = self.read_coarse_tune(trk_idx, clip_idx)? as i32;
+        let current = self
+            .read_coarse_tune_value(trk_idx, clip_idx)?
+            .ok_or_else(|| Error::Value("cannot nudge coarse tune without a device reply".to_string()))?
+            as i32;
         let next = (current + step).clamp(16, 112) as u8;
         self.write_coarse_tune(trk_idx, clip_idx, next)?;
         Ok(next)
