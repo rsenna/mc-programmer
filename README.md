@@ -10,9 +10,9 @@ table:
 
 | Library | Status | Tests |
 |---|---|---|
-| **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 76 / 76 |
+| **[`python_lib/`](python_lib/) (Python)** | works on macOS / Linux / Windows; CoreMIDI on Apple via `python-rtmidi` | 79 / 79 |
 | **[`swift_lib/`](swift_lib/) (Swift)** | native CoreMIDI on macOS / iOS; builds without it on Linux | 44 / 44 |
-| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 200 / 200 |
+| **[`rust_lib/`](rust_lib/) (Rust)** | cross-platform; optional `midir` backend for CoreMIDI / ALSA / WinMM | 202 / 202 |
 
 All three libraries cover **~389 named ZEN-Core tone parameters** auto-generated
 from the official Jupiter-X/Xm MIDI Implementation, plus the full
@@ -113,7 +113,7 @@ mc-programmer/
 │   ├── pyproject.toml
 │   ├── mc_programmer/         ← package source
 │   ├── examples/              ← runnable examples (LoopbackTransport)
-│   └── tests/                 ← unittest suites (76 tests)
+│   └── tests/                 ← unittest suites (79 tests)
 │
 ├── swift_lib/                 ← Swift Package (MCProgrammer)
 │   ├── README.md
@@ -160,7 +160,7 @@ pip install python-rtmidi          # only if you want to talk to real hardware
 PYTHONPATH=python_lib python -m unittest discover -s python_lib/tests
 ```
 
-76 tests, including six generator regressions. The longest library test does a full project
+79 tests, including six generator regressions. The longest library test does a full project
 round-trip (dumps every byte of every track + clip + tone + system block
 through `LoopbackTransport`, then writes them all back).
 
@@ -184,7 +184,7 @@ cargo test --all-features
 cargo run --example four_on_the_floor
 ```
 
-200 tests including unit, integration, feature-gated transport, and doctests.
+202 tests including unit, integration, feature-gated transport, and doctests.
 
 ### Regenerating the ZEN-Core parameter tables
 

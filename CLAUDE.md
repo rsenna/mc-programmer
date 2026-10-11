@@ -26,7 +26,7 @@ mc-programmer/
 ├── python_lib/          Python package
 │   ├── mc_programmer/   library source
 │   ├── examples/        runnable examples (LoopbackTransport)
-│   └── tests/           76-test unittest suites
+│   └── tests/           79-test unittest suites
 ├── swift_lib/           Swift Package
 │   ├── Sources/MCProgrammer/ library source
 │   ├── Examples/        executable target with bundled examples
@@ -67,7 +67,7 @@ The auto-generated `zencore_data.py`, `ZenCoreData.swift`, and
 PYTHONPATH=python_lib python -m unittest discover -s python_lib/tests
 ```
 
-76 tests, including six generator regressions. The library has zero hard dependencies; install
+79 tests, including six generator regressions. The library has zero hard dependencies; install
 `python-rtmidi` (or use `pip install -e python_lib[rtmidi]`) to get the
 real-hardware transport.
 
@@ -91,7 +91,7 @@ cargo test --all-features
 cargo run --example four_on_the_floor
 ```
 
-200 tests with all features enabled; the crate declares Rust 1.71 as its MSRV.
+202 tests with all features enabled; the crate declares Rust 1.71 as its MSRV.
 The default crate has no MIDI backend; enable the optional `midir` feature
 for CoreMIDI on macOS, ALSA on Linux, or WinMM on Windows.
 
