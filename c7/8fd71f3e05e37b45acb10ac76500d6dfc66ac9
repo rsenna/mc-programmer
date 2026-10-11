@@ -1,0 +1,18 @@
+CLAUDE.md
+  h_0f0df16e3c7bfc 29,70,94
+README.md
+  h_0f0df16e3c7bfc 13,15,116,163,187
+ROADMAP.md
+  h_0f0df16e3c7bfc 193,197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c78fd71f3e05e37b45acb10ac76500d6dfc66ac9",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
