@@ -1,0 +1,16 @@
+rust_lib/src/client.rs
+  h_0f0df16e3c7bfc 122,136-141,197,202-205,215,219-225,239,241-244
+rust_lib/tests/integration.rs
+  h_0f0df16e3c7bfc 1395-1469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e33866f8099ac40323ad3ba955294a76c7165eb1",
+  "prompts": {},
+  "humans": {
+    "h_0f0df16e3c7bfc": {
+      "author": "owkwo-bot <agents@owkwo.org>"
+    }
+  }
+}
