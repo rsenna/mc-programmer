@@ -170,7 +170,8 @@ swift test
 swift run MCProgrammerExamples           # runs the bundled offline examples
 ```
 
-42 tests; ~40 seconds (the project round-trip exercises ~15 KB per tone).
+42 tests; ~8 seconds in a local run. The full dump/restore integration test
+remains; the file round-trip test uses a compact project fixture.
 
 ### Rust
 

@@ -74,8 +74,9 @@ swift test
 swift run MCProgrammerExamples
 ```
 
-42 tests, ~40 seconds. Builds on Linux too — `CoreMIDITransport.swift`
-is wrapped in `#if canImport(CoreMIDI)`.
+42 tests, ~8 seconds in a local run. The full dump/restore path remains
+covered; file serialization uses a compact fixture. Linux builds remain
+supported because CoreMIDI-only code is conditionally compiled.
 
 ### Rust
 

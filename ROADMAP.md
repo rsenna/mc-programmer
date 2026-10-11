@@ -227,11 +227,9 @@ address before the parameter table can be added safely.
 
 ### Known small bugs / cleanups
 
-- [ ] The Swift Project test takes ~40 seconds due to single-threaded
-      chunked I/O against `LoopbackTransport`. The Python equivalent is
-      ~13 seconds. Both are exercising real code paths so the speed
-      difference isn't a correctness issue, but the Swift test could be
-      sped up by parallelising the loopback dispatch.
+- [x] Swift test runtime: use a compact Project fixture for file round-trip,
+      while retaining the full dump-and-restore integration path. This avoids
+      repeating a 136-tone chunked dump and reduces the local suite to ~8s.
 - [ ] `LoopbackTransport.snapshot()` defaults its unread bytes to `0`
       (for test inspection) while `transfer()` defaults them to `0xFF`
       (matching the real MC's empty-step encoding). The asymmetry is
