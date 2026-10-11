@@ -1,0 +1,597 @@
+//! Tests for the address-space probe.
+
+use mc_programmer::addresses::{roland_address_from_linear, roland_address_to_linear};
+use mc_programmer::probe::{self, ProbeOptions, Snapshot};
+use mc_programmer::{LoopbackTransport, MCClient, ModelId, NullTransport};
+
+fn mc101() -> (LoopbackTransport, MCClient<LoopbackTransport>) {
+    // Hardware-faithful reply addresses: the probe's whole job is mapping
+    // replies back to addresses, so a fake that echoes the request address
+    // would not exercise it.
+    let transport = LoopbackTransport::new(ModelId::Mc101, 0xff).with_hardware_reply_addresses();
+    let client = MCClient::new(transport.clone(), ModelId::Mc101.value());
+    (transport, client)
+}
+
+#[test]
+fn walk_records_every_answered_byte() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, &[0x10, 0x11, 0x12, 0x13]);
+
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(4)).unwrap();
+
+    assert_eq!(snapshot.model, "MC-101");
+    assert_eq!(snapshot.len(), 4);
+    assert_eq!(snapshot.chunks_probed, 1);
+    assert_eq!(snapshot.chunks_answered, 1);
+    assert_eq!(snapshot.bytes[&0x20000002], 0x12);
+}
+
+#[test]
+fn walk_trims_the_last_chunk_to_the_end_address() {
+    let (_transport, client) = mc101();
+
+    // 20 bytes requested with a 16-byte chunk: 16 then 4, never past the end.
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000014, &ProbeOptions::default()).unwrap();
+
+    assert_eq!(snapshot.chunks_probed, 2);
+    assert_eq!(snapshot.len(), 20);
+    assert!(snapshot.bytes.contains_key(&0x20000013));
+    assert!(!snapshot.bytes.contains_key(&0x20000014));
+}
+
+#[test]
+fn walk_only_ever_produces_valid_7bit_addresses() {
+    let (_transport, client) = mc101();
+
+    // Straddles the 0x7F -> 0x0100 packed discontinuity.
+    let snapshot = probe::walk(&client, 0x20000070, 0x20000110, &ProbeOptions::default()).unwrap();
+
+    assert!(!snapshot.is_empty());
+    for &address in snapshot.bytes.keys() {
+        assert_eq!(
+            address & 0x8080_8080,
+            0,
+            "address 0x{address:08X} has a high MSB"
+        );
+    }
+    // 0x7F is immediately followed by 0x0100 in linear order, with no 0x80.
+    assert!(snapshot.bytes.contains_key(&0x2000007f));
+    assert!(snapshot.bytes.contains_key(&0x20000100));
+    assert!(!snapshot.bytes.contains_key(&0x20000080));
+}
+
+#[test]
+fn walk_skips_addresses_that_do_not_answer() {
+    // NullTransport never replies, which is how the real device reports an
+    // unmapped region.
+    let client = MCClient::new(NullTransport::new(), ModelId::Mc101.value());
+
+    let snapshot = probe::walk(&client, 0x01000000, 0x01000040, &ProbeOptions::default()).unwrap();
+
+    assert_eq!(snapshot.chunks_probed, 4);
+    assert_eq!(snapshot.chunks_answered, 0);
+    assert!(snapshot.is_empty());
+}
+
+#[test]
+fn walk_with_a_step_larger_than_the_chunk_samples_sparsely() {
+    let (_transport, client) = mc101();
+    let opts = ProbeOptions {
+        chunk: 0x10,
+        step: 0x40,
+        timeout: 0.1,
+    };
+
+    // 0x20000200 is linear +0x100, so four 0x40 strides fit: linear 0x00,
+    // 0x40, 0x80, 0xC0 -> packed 0x...0000, 0x...0040, 0x...0100, 0x...0140.
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000200, &opts).unwrap();
+
+    assert_eq!(snapshot.chunks_probed, 4);
+    assert_eq!(snapshot.len(), 4 * 0x10);
+    assert!(snapshot.bytes.contains_key(&0x20000040));
+    assert!(snapshot.bytes.contains_key(&0x20000100));
+    assert!(
+        !snapshot.bytes.contains_key(&0x20000020),
+        "0x20 is inside a skipped gap"
+    );
+}
+
+#[test]
+fn empty_range_is_allowed() {
+    let (_transport, client) = mc101();
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000000, &ProbeOptions::default()).unwrap();
+    assert_eq!(snapshot.chunks_probed, 0);
+    assert!(snapshot.is_empty());
+}
+
+#[test]
+fn walk_rejects_a_backwards_range() {
+    let (_transport, client) = mc101();
+    let err = probe::walk(&client, 0x20000010, 0x20000000, &ProbeOptions::default()).unwrap_err();
+    assert!(err.to_string().contains("below start"), "{err}");
+}
+
+#[test]
+fn probe_options_are_validated() {
+    let (_transport, client) = mc101();
+    let bad = [
+        ProbeOptions {
+            chunk: 0,
+            step: 0x10,
+            timeout: 0.1,
+        },
+        ProbeOptions {
+            chunk: 0x81,
+            step: 0x81,
+            timeout: 0.1,
+        },
+        ProbeOptions {
+            chunk: 0x30,
+            step: 0x30,
+            timeout: 0.1,
+        }, // does not divide 0x80
+        ProbeOptions {
+            chunk: 0x10,
+            step: 0x08,
+            timeout: 0.1,
+        }, // step < chunk
+        ProbeOptions {
+            chunk: 0x10,
+            step: 0x10,
+            timeout: 0.0,
+        },
+    ];
+    for opts in bad {
+        assert!(
+            probe::walk(&client, 0x20000000, 0x20000010, &opts).is_err(),
+            "expected {opts:?} to be rejected"
+        );
+    }
+}
+
+#[test]
+fn a_garbled_reply_is_recorded_and_the_sweep_continues() {
+    // Answers every request with a frame that is not a parseable DT1. The real
+    // device does this occasionally; it must not abort a multi-minute sweep.
+    struct Garbled;
+    impl mc_programmer::Transport for Garbled {
+        fn transfer(&self, _message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            Ok(vec![0xf0, 0x41, 0x10, 0x5e, 0x12, 0xf7]) // too short for DT1
+        }
+    }
+
+    let client = MCClient::new(Garbled, ModelId::Mc101.value());
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000030, &ProbeOptions::default()).unwrap();
+
+    assert_eq!(snapshot.chunks_probed, 3, "the sweep ran to the end");
+    assert_eq!(snapshot.chunks_failed, 3);
+    assert_eq!(snapshot.chunks_answered, 0);
+    assert!(snapshot.is_empty());
+    assert_eq!(snapshot.failures.len(), 3);
+    assert_eq!(snapshot.failures[0].0, 0x20000000);
+}
+
+#[test]
+fn a_sweep_keeps_the_bytes_it_got_before_a_failure() {
+    // Good reply, then garbage, then good again: the good bytes survive.
+    struct FlakyThirdChunk {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl mc_programmer::Transport for FlakyThirdChunk {
+        fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if n == 1 {
+                return Ok(vec![0xf0, 0xf7]); // unparseable
+            }
+            // Echo a valid DT1 for the requested address with filler bytes.
+            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+            let linear = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), linear & 0x7f7f_7f7f, &[0x2b; 0x10]).unwrap())
+        }
+    }
+
+    let client = MCClient::new(
+        FlakyThirdChunk {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        },
+        ModelId::Mc101.value(),
+    );
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000030, &ProbeOptions::default()).unwrap();
+
+    assert_eq!(snapshot.chunks_probed, 3);
+    assert_eq!(snapshot.chunks_failed, 1);
+    assert_eq!(snapshot.chunks_answered, 2);
+    assert_eq!(snapshot.len(), 0x20, "two good chunks of 16 bytes kept");
+    assert!(snapshot.bytes.contains_key(&0x20000000));
+    assert!(
+        !snapshot.bytes.contains_key(&0x20000010),
+        "the failed chunk left a hole"
+    );
+    assert!(snapshot.bytes.contains_key(&0x20000020));
+}
+
+#[test]
+fn failures_round_trip_through_json() {
+    let mut snapshot = Snapshot {
+        model: "MC-101".to_string(),
+        label: None,
+        bytes: Default::default(),
+        chunks_probed: 2,
+        chunks_answered: 1,
+        chunks_failed: 1,
+        failures: vec![(0x20000010, "DT1 message too short: 2 bytes".to_string())],
+        relocated_replies: 0,
+        unplaceable_replies: 0,
+        subdivisions: 0,
+    };
+    snapshot.bytes.insert(0x20000000, 0x7f);
+
+    let restored = Snapshot::from_json(&snapshot.to_json()).unwrap();
+
+    assert_eq!(restored.chunks_failed, 1);
+    assert_eq!(restored.failures, snapshot.failures);
+    assert_eq!(restored.bytes, snapshot.bytes);
+}
+
+#[test]
+fn a_relocated_reply_is_placed_where_the_device_says() {
+    // Reproduces real MC-101 behaviour: asked about packed 0x40000024 (linear
+    // 0x08000024), it answers for linear 0x08000026 — packed 0x40000026 —
+    // having skipped forward past unmapped bytes. A full-length reply is
+    // placeable, and belongs at the address the device named, not the one
+    // requested.
+    struct SkipsForward;
+    impl mc_programmer::Transport for SkipsForward {
+        fn transfer(&self, _message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            Ok(mc_programmer::build_dt1(
+                ModelId::Mc101.value(),
+                0x0800_0026,
+                &[0x11, 0x22, 0x33, 0x44],
+            )
+            .unwrap())
+        }
+    }
+
+    let client = MCClient::new(SkipsForward, ModelId::Mc101.value());
+    let snapshot = probe::walk(&client, 0x40000024, 0x40000028, &ProbeOptions::gapless(4)).unwrap();
+
+    assert_eq!(snapshot.relocated_replies, 1);
+    assert_eq!(snapshot.unplaceable_replies, 0);
+    assert_eq!(
+        snapshot.subdivisions, 0,
+        "a full-length reply needs no splitting"
+    );
+    assert_eq!(snapshot.bytes.get(&0x40000026), Some(&0x11));
+    assert_eq!(snapshot.bytes.get(&0x40000029), Some(&0x44));
+    assert!(
+        !snapshot.bytes.contains_key(&0x40000024),
+        "the requested address must stay empty when the device answered elsewhere"
+    );
+}
+
+#[test]
+fn an_unresolvable_reply_is_discarded_not_guessed() {
+    // A reply naming an address outside the requested span cannot be placed.
+    // Discarding it is the only safe move: a guess becomes a wrong entry in
+    // the address map that looks entirely plausible.
+    struct RepliesOutOfRange;
+    impl mc_programmer::Transport for RepliesOutOfRange {
+        fn transfer(&self, _message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), 0x00000001, &[0x7f; 4]).unwrap())
+        }
+    }
+
+    let client = MCClient::new(RepliesOutOfRange, ModelId::Mc101.value());
+    let snapshot = probe::walk(
+        &client,
+        0x40000000,
+        0x40000010,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    assert_eq!(snapshot.unplaceable_replies, 1);
+    assert!(
+        snapshot.is_empty(),
+        "nothing may be recorded from an unplaceable reply"
+    );
+    assert_eq!(snapshot.failures.len(), 1);
+    assert!(
+        snapshot.failures[0].1.contains("resolves to nothing"),
+        "{:?}",
+        snapshot.failures[0]
+    );
+}
+
+#[test]
+fn a_reply_for_the_requested_address_is_not_counted_as_relocated() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, &[1, 2, 3, 4]);
+
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(4)).unwrap();
+
+    assert_eq!(snapshot.relocated_replies, 0);
+    assert_eq!(snapshot.bytes[&0x20000000], 1);
+}
+
+// --- diffing -----------------------------------------------------------------
+
+#[test]
+fn diff_finds_a_single_changed_byte() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, &[0x01, 0x02, 0x03, 0x04]);
+    let before = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(4)).unwrap();
+
+    transport.preload(0x20000002, &[0x33]);
+    let after = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(4)).unwrap();
+
+    let diffs = probe::diff(&before, &after);
+    assert_eq!(diffs.len(), 1);
+    assert_eq!(diffs[0].address, 0x20000002);
+    assert_eq!(diffs[0].before, Some(0x03));
+    assert_eq!(diffs[0].after, Some(0x33));
+}
+
+#[test]
+fn identical_snapshots_have_no_diff() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, &[0x01, 0x02]);
+    let a = probe::walk(&client, 0x20000000, 0x20000002, &ProbeOptions::gapless(2)).unwrap();
+    let b = probe::walk(&client, 0x20000000, 0x20000002, &ProbeOptions::gapless(2)).unwrap();
+
+    assert!(probe::diff(&a, &b).is_empty());
+    assert_eq!(probe::format_diff(&[]), "no differences\n");
+}
+
+#[test]
+fn diff_reports_addresses_present_on_only_one_side() {
+    let mut before = Snapshot {
+        model: "MC-101".to_string(),
+        label: None,
+        bytes: Default::default(),
+        chunks_probed: 1,
+        chunks_answered: 1,
+        chunks_failed: 0,
+        failures: Vec::new(),
+        relocated_replies: 0,
+        unplaceable_replies: 0,
+        subdivisions: 0,
+    };
+    before.bytes.insert(0x20000000, 0xaa);
+
+    let mut after = before.clone();
+    after.bytes.remove(&0x20000000);
+    after.bytes.insert(0x20000001, 0xbb);
+
+    let diffs = probe::diff(&before, &after);
+    assert_eq!(diffs.len(), 2);
+    assert_eq!((diffs[0].before, diffs[0].after), (Some(0xaa), None));
+    assert_eq!((diffs[1].before, diffs[1].after), (None, Some(0xbb)));
+}
+
+#[test]
+fn diff_runs_group_contiguous_changes_and_split_at_gaps() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, &[0; 16]);
+    let before = probe::walk(&client, 0x20000000, 0x20000010, &ProbeOptions::default()).unwrap();
+
+    // Two separate fields: a two-byte one at +0x02 and a one-byte one at +0x08.
+    transport.preload(0x20000002, &[0x11, 0x22]);
+    transport.preload(0x20000008, &[0x33]);
+    let after = probe::walk(&client, 0x20000000, 0x20000010, &ProbeOptions::default()).unwrap();
+
+    let runs = probe::diff_runs(&probe::diff(&before, &after));
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].address, 0x20000002);
+    assert_eq!(runs[0].len(), 2);
+    assert_eq!(runs[1].address, 0x20000008);
+    assert_eq!(runs[1].len(), 1);
+
+    let report = probe::format_diff(&runs);
+    assert!(
+        report.contains("2 changed run(s), 3 byte(s) total"),
+        "{report}"
+    );
+    assert!(report.contains("20000002"), "{report}");
+    assert!(report.contains("11 22"), "{report}");
+}
+
+#[test]
+fn diff_runs_join_across_the_packed_address_discontinuity() {
+    let mut before = Snapshot {
+        model: "MC-101".to_string(),
+        label: None,
+        bytes: Default::default(),
+        chunks_probed: 1,
+        chunks_answered: 1,
+        chunks_failed: 0,
+        failures: Vec::new(),
+        relocated_replies: 0,
+        unplaceable_replies: 0,
+        subdivisions: 0,
+    };
+    before.bytes.insert(0x2000007f, 0x00);
+    before.bytes.insert(0x20000100, 0x00);
+
+    let mut after = before.clone();
+    after.bytes.insert(0x2000007f, 0x01);
+    after.bytes.insert(0x20000100, 0x02);
+
+    // 0x7F and 0x0100 are adjacent in linear space, so this is one field.
+    let runs = probe::diff_runs(&probe::diff(&before, &after));
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].len(), 2);
+    assert_eq!(runs[0].address, 0x2000007f);
+}
+
+// --- snapshot serialization --------------------------------------------------
+
+#[test]
+fn snapshot_json_round_trips() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, &[0xde, 0xad, 0x7e, 0x7f]);
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000004, &ProbeOptions::gapless(4))
+        .unwrap()
+        .labelled("scene 1 selected");
+
+    let restored = Snapshot::from_json(&snapshot.to_json()).unwrap();
+
+    assert_eq!(restored.bytes, snapshot.bytes);
+    assert_eq!(restored.model, "MC-101");
+    assert_eq!(restored.label.as_deref(), Some("scene 1 selected"));
+    assert_eq!(restored.chunks_probed, snapshot.chunks_probed);
+}
+
+#[test]
+fn snapshot_json_round_trips_across_the_packed_discontinuity() {
+    let (_transport, client) = mc101();
+    let snapshot = probe::walk(&client, 0x20000078, 0x20000108, &ProbeOptions::default()).unwrap();
+
+    let restored = Snapshot::from_json(&snapshot.to_json()).unwrap();
+
+    assert_eq!(restored.bytes, snapshot.bytes);
+    for &address in restored.bytes.keys() {
+        assert_eq!(address & 0x8080_8080, 0);
+    }
+}
+
+#[test]
+fn loading_a_foreign_json_file_is_refused() {
+    let err = Snapshot::from_json(r#"{"format":"mc_programmer.tone.v1"}"#).unwrap_err();
+    assert!(err.to_string().contains("not a probe snapshot"), "{err}");
+}
+
+#[test]
+fn runs_collapse_contiguous_bytes_and_split_at_gaps() {
+    let mut snapshot = Snapshot {
+        model: "MC-101".to_string(),
+        label: None,
+        bytes: Default::default(),
+        chunks_probed: 2,
+        chunks_answered: 2,
+        chunks_failed: 0,
+        failures: Vec::new(),
+        relocated_replies: 0,
+        unplaceable_replies: 0,
+        subdivisions: 0,
+    };
+    snapshot.bytes.insert(0x20000000, 1);
+    snapshot.bytes.insert(0x20000001, 2);
+    snapshot.bytes.insert(0x20000010, 3);
+
+    let runs = snapshot.runs();
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].bytes, vec![1, 2]);
+    assert_eq!(runs[1].address, 0x20000010);
+}
+
+#[test]
+fn hex_dump_and_csv_label_each_row_with_its_own_address() {
+    let (transport, client) = mc101();
+    transport.preload(0x20000000, b"DM-101 SCENE 01x");
+    transport.preload(0x20000010, &[0x41; 16]);
+    let snapshot = probe::walk(&client, 0x20000000, 0x20000020, &ProbeOptions::default()).unwrap();
+
+    let dump = snapshot.hex_dump();
+    assert!(dump.contains("20000000"), "{dump}");
+    assert!(dump.contains("|DM-101 SCENE 01x|"), "{dump}");
+    assert!(dump.contains("20000010"), "{dump}");
+
+    let csv = snapshot.to_csv();
+    assert!(csv.starts_with("address,length,hex,ascii\n"), "{csv}");
+    assert_eq!(
+        csv.lines().count(),
+        3,
+        "header plus two 16-byte rows:\n{csv}"
+    );
+}
+
+#[test]
+fn probe_progress_reports_each_chunk() {
+    let (_transport, client) = mc101();
+    let mut seen: Vec<(u32, usize)> = Vec::new();
+
+    probe::walk_with_progress(
+        &client,
+        0x20000000,
+        0x20000030,
+        &ProbeOptions::default(),
+        &mut |address, len| seen.push((address, len)),
+    )
+    .unwrap();
+
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[0], (0x20000000, 0x10));
+    assert_eq!(seen[2].0, 0x20000020);
+}
+
+#[test]
+fn linear_round_trip_matches_the_address_helpers() {
+    // Guards the assumption the walker rests on: stepping linearly and
+    // converting back is exactly the device's byte order.
+    for linear in [0u32, 1, 0x7f, 0x80, 0x3fff, 0x4000] {
+        let packed = roland_address_from_linear(linear).unwrap();
+        assert_eq!(roland_address_to_linear(packed).unwrap(), linear);
+        assert_eq!(packed & 0x8080_8080, 0);
+    }
+}
+
+#[test]
+fn a_short_reply_is_split_rather_than_laid_down_contiguously() {
+    // Models the measured MC behaviour: a span containing an unmapped hole
+    // answers a wide request with only the mapped bytes, concatenated. Laying
+    // those down contiguously silently shifts everything past the hole, which
+    // is what made sweeps at different chunk sizes disagree on hardware. The
+    // sweep must subdivide until each reply covers its request exactly.
+    //
+    // Map, as linear offsets from 0x20000000: 0..4 mapped, 4..8 unmapped,
+    // 8..12 mapped, 12..16 unmapped.
+    const BASE: u32 = 0x0400_0000; // linear of packed 0x20000000
+    fn mapped(offset: u32) -> bool {
+        let i = offset - BASE;
+        i < 4 || (8..12).contains(&i)
+    }
+
+    struct HoleInTheMiddle;
+    impl mc_programmer::Transport for HoleInTheMiddle {
+        fn transfer(&self, message: &[u8], _timeout: f64) -> mc_programmer::Result<Vec<u8>> {
+            let packed = u32::from_be_bytes([message[8], message[9], message[10], message[11]]);
+            let base = mc_programmer::addresses::roland_address_to_linear(packed).unwrap();
+            let count = u32::from(message[15]).max(1);
+
+            let offsets: Vec<u32> = (base..base + count).filter(|&o| mapped(o)).collect();
+            let Some(&first) = offsets.first() else {
+                return Ok(Vec::new());
+            };
+            let data: Vec<u8> = offsets.iter().map(|&o| 0x10 + (o - BASE) as u8).collect();
+            Ok(mc_programmer::build_dt1(ModelId::Mc101.value(), first & 0x7f7f_7f7f, &data).unwrap())
+        }
+    }
+
+    let client = MCClient::new(HoleInTheMiddle, ModelId::Mc101.value());
+    let snapshot = probe::walk(
+        &client,
+        0x20000000,
+        0x20000010,
+        &ProbeOptions::gapless(0x10),
+    )
+    .unwrap();
+
+    assert!(
+        snapshot.subdivisions > 0,
+        "a short reply must trigger a split"
+    );
+    for i in 0..16u32 {
+        let at = snapshot.bytes.get(&(0x20000000 + i));
+        if mapped(BASE + i) {
+            assert_eq!(
+                at,
+                Some(&(0x10 + i as u8)),
+                "offset {i} misplaced or missing"
+            );
+        } else {
+            assert_eq!(at, None, "offset {i} is unmapped and must stay absent");
+        }
+    }
+}

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::addresses::add_roland_offset;
+use crate::addresses::{add_roland_offset, roland_address_to_linear};
 use crate::error::{Error, Result};
 use crate::protocol::{build_dt1, parse_dt1_payload, roland_checksum, validate_7bit_data, ModelId};
 use crate::transport::Transport;
@@ -32,6 +32,9 @@ struct Inner {
     active_scene: Option<u8>,
     /// Per-MIDI-channel record of the most-recently-selected clip (1-based).
     active_clip_per_channel: HashMap<u8, u8>,
+    /// Report reply addresses the way real hardware does (masked linear)
+    /// rather than echoing the packed request address.
+    hardware_reply_addresses: bool,
 }
 
 /// In-memory fake MC device. Cheap to clone — clones share the same address
@@ -58,6 +61,19 @@ impl LoopbackTransport {
     }
 
     /// Pre-load a region of the address space (useful in tests).
+    /// Report reply addresses the way a real MC does: the data's **linear**
+    /// address with every byte masked to 7 bits, instead of echoing back the
+    /// packed address that was requested.
+    ///
+    /// Off by default, because most of the library is written against the
+    /// packed echo. Turn it on for anything that maps replies back to
+    /// addresses — see [`crate::probe`] — so the fake can actually exercise
+    /// that mapping.
+    pub fn with_hardware_reply_addresses(self) -> Self {
+        self.inner.lock().hardware_reply_addresses = true;
+        self
+    }
+
     pub fn preload(&self, address: u32, bytes: &[u8]) {
         let mut inner = self.inner.lock();
         for (i, &b) in bytes.iter().enumerate() {
@@ -176,7 +192,25 @@ impl Transport for LoopbackTransport {
                             & 0x7f
                     })
                     .collect();
-                Ok(build_dt1(inner.model_id, address, &data)?)
+                // How the reply's address field is filled in. A real MC reports
+                // the returned data's **linear** address, with every byte
+                // masked to 0x7F by the 7-bit MIDI pipe — so several linear
+                // addresses arrive identically (verified on an MC-101: packed
+                // 0x40000000, 0x40000100 and 0x40020000 all reply
+                // `08 00 00 00`). Echoing the packed request address, as this
+                // fake does by default, cannot reproduce that, which is how a
+                // byte-misplacement bug in the probe survived the whole
+                // offline suite and only appeared against hardware.
+                //
+                // The faithful behaviour is opt-in via
+                // [`LoopbackTransport::with_hardware_reply_addresses`] because
+                // the rest of the library is written against the packed echo.
+                let reply_address = if inner.hardware_reply_addresses {
+                    roland_address_to_linear(address)? & 0x7f7f_7f7f
+                } else {
+                    address
+                };
+                Ok(build_dt1(inner.model_id, reply_address, &data)?)
             }
             _ => Ok(Vec::new()),
         }

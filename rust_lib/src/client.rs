@@ -24,7 +24,7 @@ use crate::error::{Error, Result};
 use crate::notes::Pitch;
 use crate::preset::{region_size, tone_region_specs, TonePreset, ToneRegion};
 use crate::protocol::{
-    build_dt1, build_rq1, model_name, parse_dt1_payload, universal_device_inquiry, validate_7bit_data,
+    build_dt1, build_rq1, model_name, parse_dt1_payload, universal_device_inquiry, validate_7bit_data, DT1Message,
 };
 use crate::sequencer::{decode_note_step, encode_note_step, NoteStep};
 use crate::transport::Transport;
@@ -79,11 +79,23 @@ impl<T: Transport> MCClient<T> {
     /// Request `count` bytes at a packed Roland address and return the DT1 payload.
     /// An empty transport reply yields an empty vector; framing and transport errors propagate.
     pub fn read(&self, address: u32, count: u32) -> Result<Vec<u8>> {
+        self.read_with_timeout(address, count, 0.1)
+    }
+
+    /// Like [`read`](Self::read) but with an explicit reply timeout in seconds.
+    ///
+    /// Address-space probing needs this: an unmapped address never replies, so a
+    /// sweep pays the full timeout on every miss and wants it as short as the link
+    /// allows, while a slow or busy device may need longer than the 0.1 s default.
+    /// Measured on an MC-101: 0.03 s already loses mapped regions, so shortening it
+    /// is not free.
+    pub fn read_with_timeout(&self, address: u32, count: u32, timeout: f64) -> Result<Vec<u8>> {
         let msg = build_rq1(self.model_id, address, count)?;
         if count == 0 {
             return Ok(Vec::new());
         }
-        let reply = self.transport.transfer(&msg, 0.1)?;
+
+        let reply = self.transport.transfer(&msg, timeout)?;
         if reply.is_empty() {
             return Ok(Vec::new());
         }
@@ -107,6 +119,28 @@ impl<T: Transport> MCClient<T> {
             )));
         }
         Ok(response.data)
+    }
+
+    /// Read and return the whole DT1 reply, address included.
+    ///
+    /// [`read`](Self::read) hands back only the payload. That is fine when the
+    /// device answers for exactly the range requested, which it does not always
+    /// do: the MC answers with the next mapped run at or after the address asked
+    /// for, and reports where that run starts. Anything mapping replies back to
+    /// addresses — address-space probing above all — must use this and resolve the
+    /// reported address with [`crate::addresses::resolve_reply_location`].
+    ///
+    /// `Ok(None)` means the device did not reply at all.
+    pub fn read_dt1(&self, address: u32, count: u32, timeout: f64) -> Result<Option<DT1Message>> {
+        if count == 0 {
+            return Ok(None);
+        }
+        let msg = build_rq1(self.model_id, address, count)?;
+        let reply = self.transport.transfer(&msg, timeout)?;
+        if reply.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(parse_dt1_payload(&reply)?))
     }
 
     /// Send 7-bit data to a packed Roland address in a DT1 message.

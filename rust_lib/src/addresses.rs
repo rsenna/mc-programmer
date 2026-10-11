@@ -50,6 +50,88 @@ pub fn add_roland_offset(address: u32, byte_offset: u32) -> Result<u32> {
     roland_address_from_linear(linear)
 }
 
+/// Candidate linear addresses a DT1 reply could be reporting.
+///
+/// The MC reports the returned data's **linear** address, but pushes it
+/// through the 7-bit MIDI pipe with every byte masked to `0x7F` — so up to 16
+/// distinct linear addresses arrive as the same four bytes. (Verified on an
+/// MC-101: requests for packed `0x40000080`, `0x40000100` and `0x40020000`,
+/// whose linear forms are `0x08000000`, `0x08000080` and `0x08008000`, all
+/// reply `08 00 00 00`. A Roland Clan forum report of request `32 10 00 00`
+/// answering `06 44 00 00` is the same rule — `0x06440000` is that address's
+/// linear form.)
+///
+/// Each returned byte is therefore either itself or itself plus `0x80`, which
+/// this expands into every combination that fits the 28-bit space.
+pub fn reply_address_candidates(reply_address: u32) -> Vec<u32> {
+    let bytes = [
+        (reply_address >> 24) & 0xff,
+        (reply_address >> 16) & 0xff,
+        (reply_address >> 8) & 0xff,
+        reply_address & 0xff,
+    ];
+
+    let mut candidates = Vec::with_capacity(16);
+    for combination in 0u32..16 {
+        let mut value = 0u32;
+        for (index, byte) in bytes.iter().enumerate() {
+            let high = (combination >> (3 - index)) & 1;
+            value = (value << 8) | (byte | (high << 7));
+        }
+        if value <= MAX_LINEAR_ADDRESS {
+            candidates.push(value);
+        }
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    candidates
+}
+
+/// Where a DT1 reply's data actually lives, resolved against the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplyLocation {
+    /// Exactly one candidate falls inside the requested span. `linear` is the
+    /// data's linear start address; `relocated` is true when the device moved
+    /// forward from the address asked for, which it does to skip unmapped
+    /// bytes.
+    Resolved { linear: u32, relocated: bool },
+    /// Several candidates fit and no rule picks between them. Not currently
+    /// produced — [`resolve_reply_location`] takes the nearest candidate at or
+    /// after the request — but kept so a stricter caller can distinguish
+    /// "resolved by a rule" from "resolved uniquely".
+    Ambiguous(Vec<u32>),
+    /// No candidate falls inside the requested span. Either the reply belongs
+    /// to a different request, or the device did something unmodelled.
+    Unexplained,
+}
+
+/// Resolve a DT1 reply's masked address against the request that provoked it.
+///
+/// An RQ1 behaves like "return the next mapped run at or after this address",
+/// with the count as a hint rather than a bound: an MC-101 asked about packed
+/// `0x40000020` for 16 bytes answered for `0x40000026`, and asked for 8 bytes
+/// from `0x40000020` answered for `0x4000002E` — past the end of the span.
+/// So a candidate is accepted when it is at or after the requested address,
+/// and the nearest one forward wins, since the device returns the *next*
+/// mapped bytes rather than an arbitrary later run.
+///
+/// Anything with no candidate at or after the request is reported rather than
+/// guessed: placing a payload at the wrong address produces an address map
+/// that looks plausible and is wrong.
+pub fn resolve_reply_location(reply_address: u32, request_linear: u32, _count: u32) -> ReplyLocation {
+    match reply_address_candidates(reply_address)
+        .into_iter()
+        .filter(|&candidate| candidate >= request_linear)
+        .min()
+    {
+        Some(linear) => ReplyLocation::Resolved {
+            linear,
+            relocated: linear != request_linear,
+        },
+        None => ReplyLocation::Unexplained,
+    }
+}
+
 /// Add one packed Roland address value to another.
 pub fn add_roland_address(address: u32, packed_offset: u32) -> Result<u32> {
     add_roland_offset(address, roland_address_to_linear(packed_offset)?)

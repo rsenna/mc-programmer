@@ -92,6 +92,32 @@ sub-block. Both are now in the framework:
 - [x] Strict model-ID safety: `Project.load_into` refuses to flash an
       MC-707 dump onto an MC-101 unless `force=True`
 
+### Address-space probe
+
+- [x] `probe::walk` / `walk_with_progress` — sweep a packed address range,
+      recording only the bytes the device actually answers for, stepping
+      through *linear* addresses so no invalid (MSB-set) address is requested
+- [x] `addresses::resolve_reply_location` — decode the MC's DT1 reply
+      address, which reports the data's **linear** address with every byte
+      masked to `0x7F`, resolved against the request
+- [x] Short replies are **subdivided** rather than placed contiguously: the
+      MC gap-compresses a partly-mapped span, so byte *i* of a short payload
+      is not byte *i* of the range
+- [x] `probe::Snapshot` — sparse address → byte record with JSON save/load,
+      hex dump and CSV export, plus `relocated_replies`, `subdivisions` and
+      `unplaceable_replies` so a sweep reports its own reliability
+- [x] `probe::diff` / `diff_runs` / `format_diff` — byte-level diff of two
+      snapshots, grouped into contiguous runs (one run per changed field)
+- [x] `MCClient::read_with_timeout` / `read_dt1`
+- [x] `LoopbackTransport::with_hardware_reply_addresses` — opt-in faithful
+      reply addressing, so the fake can exercise reply→address mapping
+- [x] `mc-probe` CLI with `ports` / `dump` / `diff` / `scene` / `clip` /
+      `backup` / `restore`, and `examples/raw_reply.rs` for frame-level
+      debugging
+- [x] Procedure: [`docs/PROBING.md`](docs/PROBING.md)
+
+Rust only so far — the Python and Swift ports do not have it yet.
+
 ### Transports
 
 - [x] `Transport` protocol — request/reply Sys-Ex (`transfer`) and
@@ -157,7 +183,8 @@ sub-block. Both are now in the framework:
 - [x] Swift: 44 tests via XCTest, all passing; full suite runs in ~8 seconds
       (the file round-trip uses a compact fixture; the full dump/restore
       integration path remains covered)
-- [x] Rust: 146 tests via `cargo test --all-features`, all passing
+- [x] Rust: 188 tests via `cargo test --all-features`, all passing
+      (42 of them cover the address-space probe and reply-address decoding)
 
 ---
 
@@ -187,8 +214,10 @@ yet. Either is "drop in a table from the existing extracted text".
 ### Medium value, address-unverified
 
 These need either an MC-specific reference (which we don't have) or
-hardware exploration via `hack_tools.py` to find the correct SysEx
-address before the parameter table can be added safely.
+hardware exploration to find the correct SysEx address before the parameter
+table can be added safely. Use `mc-probe` and the procedure in
+[`docs/PROBING.md`](docs/PROBING.md) — dump, change one thing on the device,
+dump again, diff.
 
 - [ ] **Drum Kit Tone parameters.** MC-707 / MC-101 reference manuals
       document the parameters (KIT MFX CTRL, DRUM COMP1-6, PAD CTRL,
@@ -251,11 +280,12 @@ address before the parameter table can be added safely.
    Swift, and Rust address-map modules, then build a parameter table for it the
    same way (or, for opaque blobs, add it to `Project` directly).
 3. **Probing for unverified addresses**: the original
-   `hack_tools.py` from the test scripts (now removed from this repo
-   but visible in git history) is the reference for memory-dump
-   exploration on real MC hardware. The same approach can be ported
-   into the new library by extending `MCClient` with a `walk_address_space`
-   helper.
+   use `mc-probe` and the procedure in
+   [`docs/PROBING.md`](docs/PROBING.md). It supersedes the original
+   `hack_tools.py` exploration script (removed from this repo, still in git
+   history), which used the same dump-change-dump-diff method. Confirm a
+   candidate address against a third value and a neighbouring field, and
+   round-trip a write, before adding it to the address map.
 4. Run all three test suites and make sure everything still passes:
    ```bash
    PYTHONPATH=python_lib python -m unittest discover -s python_lib/tests

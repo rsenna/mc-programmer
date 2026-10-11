@@ -43,3 +43,9 @@ _firmware_extract/
 # Tooling scratch
 /tmp/
 *.tmp
+
+# Cargo puts binary crates in src/bin/, but many contributors' global
+# gitignore excludes `bin/` (build output in most other ecosystems), which
+# would silently drop rust_lib/src/bin/ from commits. Un-ignore it here so the
+# mc-probe binary stays tracked regardless of that global rule.
+!rust_lib/src/bin/
