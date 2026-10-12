@@ -11,6 +11,7 @@
 //! * the MC address map (tracks, clips, sequencer, motion, ZEN-Core tones)
 //! * note-step encoding / decoding (16-lane "components", start/end cents, ties)
 //! * motion lane addressing
+//! * an address-space probe for locating undocumented blocks ([`probe`])
 //! * the ZEN-Core parameter framework (auto-generated ~389-entry table)
 //! * a high-level client that ties a pluggable [`Transport`] to all of the above
 //!
@@ -34,6 +35,7 @@ pub mod loopback;
 pub mod midir_transport;
 pub mod notes;
 pub mod preset;
+pub mod probe;
 pub mod project;
 pub mod protocol;
 pub mod sequencer;
@@ -41,7 +43,10 @@ pub mod transport;
 pub mod zencore;
 mod zencore_data;
 
-pub use addresses::{AddressMap, StepScale, CLIPS_PER_TRACK, NUM_TRACKS, STEPS_PER_CLIP, STEP_SIZE};
+pub use addresses::{
+    reply_address_candidates, resolve_reply_location, resolve_reply_location_from, AddressMap, ReplyLocation,
+    StepScale, CANDIDATE_SPACING, CLIPS_PER_TRACK, NUM_TRACKS, STEPS_PER_CLIP, STEP_SIZE,
+};
 pub use client::{ClipStepParams, MCClient};
 pub use error::{Error, Result};
 pub use loopback::LoopbackTransport;
@@ -52,6 +57,7 @@ pub use notes::{
     TOM_HIGH, TOM_HIGH_MID, TOM_LOW, TOM_LOW_MID, TOM_MID,
 };
 pub use preset::{TonePreset, ToneRegion, TONE_PRESET_FORMAT};
+pub use probe::{ByteDiff, DiffRun, ProbeOptions, Run, Snapshot, SNAPSHOT_FORMAT};
 pub use project::{ClipDump, Project, TrackDump, PROJECT_FORMAT};
 pub use protocol::{
     build_dt1, build_rq1, model_name, parse_dt1_payload, roland_checksum, universal_device_inquiry, ModelId,

@@ -50,6 +50,135 @@ pub fn add_roland_offset(address: u32, byte_offset: u32) -> Result<u32> {
     roland_address_from_linear(linear)
 }
 
+/// Candidate linear addresses a DT1 reply could be reporting.
+///
+/// The MC reports the returned data's **linear** address, but pushes it
+/// through the 7-bit MIDI pipe with every byte masked to `0x7F` — so up to 8
+/// distinct linear addresses arrive as the same four bytes (8, not 16: a
+/// linear address is bounded by 28 bits, so its top byte can never carry bit 7
+/// and those combinations fall outside the space). (Verified on an
+/// MC-101: requests for packed `0x40000000`, `0x40000100` and `0x40020000`,
+/// whose linear forms are `0x08000000`, `0x08000080` and `0x08008000`, all
+/// reply `08 00 00 00`. A Roland Clan forum report of request `32 10 00 00`
+/// answering `06 44 00 00` is the same rule — `0x06440000` is that address's
+/// linear form.)
+///
+/// Each returned byte is therefore either itself or itself plus `0x80`, which
+/// this expands into every combination that fits the 28-bit space.
+pub fn reply_address_candidates(reply_address: u32) -> Vec<u32> {
+    let bytes = [
+        (reply_address >> 24) & 0xff,
+        (reply_address >> 16) & 0xff,
+        (reply_address >> 8) & 0xff,
+        reply_address & 0xff,
+    ];
+
+    let mut candidates = Vec::with_capacity(16);
+    for combination in 0u32..16 {
+        let mut value = 0u32;
+        for (index, byte) in bytes.iter().enumerate() {
+            let high = (combination >> (3 - index)) & 1;
+            value = (value << 8) | (byte | (high << 7));
+        }
+        if value <= MAX_LINEAR_ADDRESS {
+            candidates.push(value);
+        }
+    }
+    candidates.sort_unstable();
+    candidates.dedup();
+    candidates
+}
+
+/// Where a DT1 reply's data actually lives, resolved against the request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplyLocation {
+    /// The lowest candidate at or after the request. `linear` is the data's
+    /// linear start address; `relocated` is true when the device moved forward
+    /// from the address asked for, which it does to skip unmapped bytes.
+    ///
+    /// `provable` is false when a higher candidate also fits, so the masking
+    /// could not be inverted with certainty — see
+    /// [`resolve_reply_location`]. The bytes are still the best available
+    /// hypothesis, but a sweep must report how many of its placements rest on
+    /// one.
+    Resolved {
+        linear: u32,
+        relocated: bool,
+        provable: bool,
+    },
+    /// Reserved: no rule currently returns this. Resolution reports
+    /// uncertainty through `Resolved { provable: false }` instead, since the
+    /// device's "next mapped run" behaviour always makes the nearest candidate
+    /// the leading hypothesis rather than leaving a genuine tie.
+    Ambiguous(Vec<u32>),
+    /// No candidate falls inside the requested span. Either the reply belongs
+    /// to a different request, or the device did something unmodelled.
+    Unexplained,
+}
+
+/// Smallest distance between two candidates of the same masked reply.
+///
+/// Candidates differ by having bit 7 set in some byte, so the closest two are
+/// `0x80` apart.
+pub const CANDIDATE_SPACING: u32 = 0x80;
+
+/// Resolve a DT1 reply's masked address against the request that provoked it.
+///
+/// An RQ1 behaves like "return the next mapped run at or after this address",
+/// with the count as a hint rather than a bound: an MC-101 asked about packed
+/// `0x40000020` for 16 bytes answered for `0x40000026`, and asked for 8 bytes
+/// from `0x40000020` answered for `0x4000002E` — past the end of the span. So
+/// the answer is the lowest candidate at or after the request.
+///
+/// # When one exchange is not enough
+///
+/// Candidates are [`CANDIDATE_SPACING`] apart, so a device that relocated
+/// forward by exactly that much produces the *same* masked reply as one that
+/// answered at the request: asked at linear `0x100`, a device answering for
+/// `0x180` is indistinguishable from one answering for `0x100`. The lowest
+/// candidate is the better guess, because the device returns the *next*
+/// mapped run — but it is a guess, and acting on it writes a payload `0x80`
+/// bytes from where it belongs.
+///
+/// `provable` is true only when no other candidate is at or after the
+/// request, so the answer is forced. Otherwise the caller must disambiguate,
+/// which a single request cannot do: every scope one could test the
+/// alternative against is at least `CANDIDATE_SPACING` away, and a request
+/// can ask for at most that many bytes. [`resolve_reply_location_from`]
+/// exists for the second exchange that settles it.
+pub fn resolve_reply_location(reply_address: u32, request_linear: u32) -> ReplyLocation {
+    let forward: Vec<u32> = reply_address_candidates(reply_address)
+        .into_iter()
+        .filter(|&candidate| candidate >= request_linear)
+        .collect();
+
+    match forward.first() {
+        None => ReplyLocation::Unexplained,
+        Some(&linear) => ReplyLocation::Resolved {
+            linear,
+            relocated: linear != request_linear,
+            provable: forward.len() == 1,
+        },
+    }
+}
+
+/// Resolve a reply to a request made one byte *above* the address in doubt.
+///
+/// This is how the ambiguity in [`resolve_reply_location`] is settled. Asking
+/// from `request_linear + 1` drops `request_linear` itself out of the
+/// candidate set, so the collapse disappears:
+///
+/// * data really at `request_linear` → the follow-up answers for
+///   `request_linear + 1`, which is mapped too.
+/// * data really at `request_linear + 0x80` → the follow-up answers for
+///   `request_linear + 0x80`, the lowest remaining candidate.
+///
+/// The two outcomes are distinct, so one extra exchange converts a guess into
+/// a fact.
+pub fn resolve_reply_location_from(reply_address: u32, probe_linear: u32) -> ReplyLocation {
+    resolve_reply_location(reply_address, probe_linear)
+}
+
 /// Add one packed Roland address value to another.
 pub fn add_roland_address(address: u32, packed_offset: u32) -> Result<u32> {
     add_roland_offset(address, roland_address_to_linear(packed_offset)?)

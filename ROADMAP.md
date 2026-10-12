@@ -2,9 +2,9 @@
 
 What the libraries currently cover, what's still missing, and how to add
 the missing pieces. The Python (`python_lib/mc_programmer/`), Swift
-(`swift_lib/Sources/MCProgrammer/`), and Rust (`rust_lib/src/`) packages share
-this roadmap — every feature ships in all three, with parallel implementations
-and tests.
+(`swift_lib/Sources/MCProgrammer/`), and Rust (`rust_lib/src/`) packages use this
+roadmap to track shared capabilities and language-specific features or gaps;
+not every feature is implemented in all three packages.
 
 ---
 
@@ -92,6 +92,43 @@ sub-block. Both are now in the framework:
 - [x] Strict model-ID safety: `Project.load_into` refuses to flash an
       MC-707 dump onto an MC-101 unless `force=True`
 
+### Address-space probe
+
+- [x] `probe::walk` / `walk_with_progress` — sweep a packed address range,
+      recording only the bytes the device actually answers for, stepping
+      through *linear* addresses so no invalid (MSB-set) address is requested
+- [x] `addresses::resolve_reply_location` — decode the MC's DT1 reply
+      address, which reports the data's **linear** address with every byte
+      masked to `0x7F`, resolved against the request
+- [x] Short replies are **subdivided** rather than placed contiguously: the
+      MC gap-compresses a partly-mapped span, so byte *i* of a short payload
+      is not byte *i* of the range
+- [x] `probe::Snapshot` — sparse address → byte record with JSON save/load,
+      hex dump and CSV export, plus `relocated_replies`, `subdivisions`,
+      `confirmations`, `confirmation_exchanges`, `unconfirmed_placements`,
+      `unplaceable_replies`,
+      `unprovable_placements` and `truncated_placements`, so a sweep reports
+      its own reliability
+- [x] `probe::diff` / `diff_runs` / `format_diff` — byte-level diff of two
+      snapshots, grouped into contiguous runs (one run per changed field)
+- [x] `MCClient::read_with_timeout` / `read_dt1`
+- [x] `LoopbackTransport::with_hardware_reply_addresses` — opt-in faithful
+      reply addressing, so the fake can exercise reply→address mapping
+- [x] `mc-probe` CLI with `ports` / `dump` / `diff` / `scene` / `clip`, and
+      `examples/raw_reply.rs` for frame-level debugging
+
+A whole-device backup is **not** among them: `read_chunked` rejects any reply
+shorter than the request, and short replies are routine on real hardware
+(verified on an MC-101: `chunk at 0x10000800 has 0 bytes; expected 32`), so
+`Project::dump_from` cannot complete against a device. The strict check fixed
+a real destructive bug — zero-filled chunks were being written back by
+`load_into` — so neither the old nor the new behaviour is right; absent bytes
+need representing explicitly. Until then, save the project from the device's
+own menu to its SD card.
+- [x] Procedure: [`docs/PROBING.md`](docs/PROBING.md)
+
+Rust only so far — the Python and Swift ports do not have it yet.
+
 ### Transports
 
 - [x] `Transport` protocol — request/reply Sys-Ex (`transfer`) and
@@ -153,11 +190,12 @@ sub-block. Both are now in the framework:
 
 ### Tests
 
-- [x] Python: 76 tests via `unittest`, all passing
+- [x] Python: 79 tests via `unittest`, all passing
 - [x] Swift: 44 tests via XCTest, all passing; full suite runs in ~8 seconds
       (the file round-trip uses a compact fixture; the full dump/restore
       integration path remains covered)
-- [x] Rust: 146 tests via `cargo test --all-features`, all passing
+- [x] Rust: 211 tests via `cargo test --all-features`, all passing
+      (56 cover the address-space probe and reply-address decoding)
 
 ---
 
@@ -187,8 +225,10 @@ yet. Either is "drop in a table from the existing extracted text".
 ### Medium value, address-unverified
 
 These need either an MC-specific reference (which we don't have) or
-hardware exploration via `hack_tools.py` to find the correct SysEx
-address before the parameter table can be added safely.
+hardware exploration to find the correct SysEx address before the parameter
+table can be added safely. Use `mc-probe` and the procedure in
+[`docs/PROBING.md`](docs/PROBING.md) — dump, change one thing on the device,
+dump again, diff.
 
 - [ ] **Drum Kit Tone parameters.** MC-707 / MC-101 reference manuals
       document the parameters (KIT MFX CTRL, DRUM COMP1-6, PAD CTRL,
@@ -250,12 +290,12 @@ address before the parameter table can be added safely.
 2. **Adding a verified MC address**: add the matching constants to the Python,
    Swift, and Rust address-map modules, then build a parameter table for it the
    same way (or, for opaque blobs, add it to `Project` directly).
-3. **Probing for unverified addresses**: the original
-   `hack_tools.py` from the test scripts (now removed from this repo
-   but visible in git history) is the reference for memory-dump
-   exploration on real MC hardware. The same approach can be ported
-   into the new library by extending `MCClient` with a `walk_address_space`
-   helper.
+3. **Probing for unverified addresses**: use `mc-probe` and the procedure in
+   [`docs/PROBING.md`](docs/PROBING.md). It supersedes the original
+   `hack_tools.py` exploration script (removed from this repo, still in git
+   history), which used the same dump-change-dump-diff method. Confirm a
+   candidate address against a third value and a neighbouring field, and
+   round-trip a write, before adding it to the address map.
 4. Run all three test suites and make sure everything still passes:
    ```bash
    PYTHONPATH=python_lib python -m unittest discover -s python_lib/tests
